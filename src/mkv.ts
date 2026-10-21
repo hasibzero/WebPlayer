@@ -94,7 +94,7 @@ const ID = {
 const CONTAINERS = new Set<number>([ID.SEGMENT, ID.EDITION_ENTRY, ID.CHAPTER_ATOM, ID.CHAPTER_DISPLAY]);
 
 const DEFAULT_TIMESTAMP_SCALE = 1_000_000;
-const WINDOW_SIZE = 4 * 1024 * 1024;
+const WINDOW_SIZE = 16 * 1024 * 1024;
 
 /* ------------------------------------------------------------ primitives */
 
@@ -119,11 +119,27 @@ export function blobByteSource(blob: Blob): ByteSource {
 /** Reads from an HTTP server using range requests. */
 export function urlByteSource(url: string, requestInit?: RequestInit): ByteSource {
 	let size = Number.NaN;
+
+	const head = async (): Promise<void> => {
+		if (Number.isFinite(size)) return;
+		try {
+			const response = await fetch(url, { ...requestInit, method: 'HEAD', cache: 'no-store' });
+			const length = response.headers.get('Content-Length');
+			if (length) size = Number(length);
+		} catch {
+			size = Number.NaN;
+		}
+	};
+
 	return {
 		get size() {
 			return size;
 		},
+		async ready() {
+			await head();
+		},
 		async slice(start, end) {
+			if (!Number.isFinite(size)) await head();
 			const response = await fetch(url, {
 				...requestInit,
 				headers: {
@@ -275,13 +291,23 @@ function* children(data: Uint8Array, range: Range): Generator<{ id: number; rang
 }
 
 function findElement(data: Uint8Array, start: number, end: number, target: number): Range | null {
+	// The requested end can lie beyond the buffer (e.g. the size of a segment
+	// that is much larger than the header we read).
+	const limit = Math.min(end, data.length);
 	let offset = start;
-	while (offset < end) {
+	while (offset < limit) {
 		const header = readHeader(data, offset);
 		if (!header) return null;
 		const dataStart = offset + header.idLength + header.sizeLength;
-		const dataEnd = header.unknownSize ? end : Math.min(end, dataStart + header.size);
-		if (header.id === target) return { start: dataStart, end: dataEnd };
+		const dataEnd = header.unknownSize ? limit : Math.min(limit, dataStart + header.size);
+		if (header.id === target) {
+			// Return the element's real extent, which can reach beyond the buffer
+			// (e.g. a segment that is much larger than the header we read).
+			return {
+				start: dataStart,
+				end: header.unknownSize ? limit : dataStart + header.size,
+			};
+		}
 		if (CONTAINERS.has(header.id)) {
 			const found = findElement(data, dataStart, dataEnd, target);
 			if (found) return found;
@@ -290,6 +316,80 @@ function findElement(data: Uint8Array, start: number, end: number, target: numbe
 		offset = dataEnd;
 	}
 	return null;
+}
+
+/* ------------------------------------------------------- enabled tracks */
+
+export interface PatchedHeader {
+	/** The header bytes with disabled tracks turned on. */
+	bytes: Uint8Array;
+	/** Offset up to which the patched bytes are valid. */
+	regionEnd: number;
+	/** How many tracks were enabled. */
+	enabledTracks: number;
+	/** Track numbers that were enabled. */
+	enabledTrackNumbers: number[];
+}
+
+/**
+ * Turns on tracks that the file marks as disabled (`FlagEnabled = 0`).
+ *
+ * Many releases — especially dual-audio ones — flag the non-default audio and
+ * subtitle tracks as disabled. Players like VLC or mpv still show them, but
+ * strict demuxers skip them, which would hide half of the tracks. The flag is
+ * rewritten in place, so the file keeps its exact length and all offsets stay
+ * valid.
+ */
+export function enableDisabledTracks(header: Uint8Array): PatchedHeader {
+	const empty: PatchedHeader = {
+		bytes: header,
+		regionEnd: 0,
+		enabledTracks: 0,
+		enabledTrackNumbers: [],
+	};
+
+	const segment = findElement(header, 0, header.length, ID.SEGMENT);
+	if (!segment) return empty;
+
+	const tracks = findElement(header, segment.start, segment.end, ID.TRACKS);
+	if (!tracks) return empty;
+
+	const patched = header.slice();
+	const enabledTrackNumbers: number[] = [];
+	let enabledTracks = 0;
+
+	for (const entry of children(patched, tracks)) {
+		if (entry.id !== ID.TRACK_ENTRY) continue;
+
+		let trackNumber = 0;
+		let shouldEnable = false;
+
+		for (const field of children(patched, entry.range)) {
+			if (field.id === ID.TRACK_NUMBER) {
+				trackNumber = readUint(patched, field.range);
+			} else if (field.id === ID.FLAG_ENABLED) {
+				const size = field.range.end - field.range.start;
+				if (size < 1) continue;
+				let value = 0;
+				for (let i = field.range.start; i < field.range.end; i++) value = value * 256 + patched[i];
+				if (value === 0) {
+					// The value is zero: set its last byte to one.
+					patched[field.range.end - 1] = 1;
+					shouldEnable = true;
+					enabledTracks += 1;
+				}
+			}
+		}
+
+		if (shouldEnable) enabledTrackNumbers.push(trackNumber);
+	}
+
+	return {
+		bytes: patched,
+		regionEnd: tracks.end,
+		enabledTracks,
+		enabledTrackNumbers,
+	};
 }
 
 /* ---------------------------------------------------------------- tracks */
@@ -536,7 +636,10 @@ function parseSubtitlePayload(
 	if (embedded.length) return embedded;
 
 	// Plain text: the block header holds the timing.
-	const text = payload.replace(/\r\n/g, '\n').trim();
+	const text = payload
+		.replace(/\r\n/g, '\n')
+		.replace(/<\/?(?:i|b|u|s|font|r)(?:\s[^>]*)?>/gi, '')
+		.trim();
 	if (!text) return [];
 	return [{ start: blockTime, end: blockTime + (blockDuration ?? 3), text }];
 }
@@ -627,7 +730,12 @@ function parseBlock(
  */
 export async function scanMatroska(
 	source: ByteSource,
-	options: { durationHint?: number | null; onProgress?: (loaded: number) => void } = {},
+	options: {
+		durationHint?: number | null;
+		onProgress?: (loaded: number) => void;
+		/** Called with the cues found so far, while the scan is still running. */
+		onPartial?: (tracks: MkvSubtitleTrack[]) => void;
+	} = {},
 ): Promise<MkvScanResult> {
 	const empty: MkvScanResult = {
 		tracks: [],
@@ -639,16 +747,19 @@ export async function scanMatroska(
 
 	await source.ready?.();
 
-	if (source.size < 8) return empty;
+	// The size may be unknown (e.g. a server that doesn't report it); the
+	// scanner then works with a fixed window.
+	const knownSize = Number.isFinite(source.size) ? source.size : Number.POSITIVE_INFINITY;
+	if (knownSize < 8) return empty;
 
-	const head = await readRange(source, 0, Math.min(source.size, 16));
+	const head = await readRange(source, 0, Math.min(knownSize, 16));
 	if (head[0] !== 0x1a || head[1] !== 0x45 || head[2] !== 0xdf || head[3] !== 0xa3) {
 		return empty;
 	}
 	empty.isMatroska = true;
 
 	// --- header region: tracks, chapters, timestamp scale -------------------
-	const headerEnd = Math.min(source.size, 8 * 1024 * 1024);
+	const headerEnd = Math.min(knownSize, 8 * 1024 * 1024);
 	let header = await readRange(source, 0, headerEnd);
 
 	let segment: Range | null = findElement(header, 0, header.length, ID.SEGMENT);
@@ -706,7 +817,22 @@ export async function scanMatroska(
 		for (const track of subtitleTracks) cueMap.set(track.number, []);
 
 		const segmentStart = segment.start;
-		const segmentEnd = segment.end;
+		const segmentEnd = Math.min(segment.end, knownSize);
+
+		const collect = (): MkvSubtitleTrack[] =>
+			subtitleTracks.map((track) => {
+				const cues = (cueMap.get(track.number) ?? []).sort((a, b) => a.start - b.start);
+				// Cues without an explicit duration end when the next one starts.
+				for (let i = 0; i < cues.length; i++) {
+					const next = cues[i + 1];
+					if (cues[i].end <= cues[i].start) {
+						cues[i].end = next && next.start > cues[i].start ? next.start : cues[i].start + 3;
+					}
+				}
+				return { ...track, cues };
+			});
+
+		let clusterCount = 0;
 
 		for await (const element of iterateElements(source, segmentStart, segmentEnd)) {
 			if (element.id !== ID.CLUSTER) continue;
@@ -734,19 +860,14 @@ export async function scanMatroska(
 			}
 
 			options.onProgress?.(element.dataEnd);
+
+			// Report what has been found so far, so that the cues show up while
+			// the rest of the file is still being scanned.
+			clusterCount += 1;
+			if (clusterCount % 5 === 0) options.onPartial?.(collect());
 		}
 
-		for (const track of subtitleTracks) {
-			const cues = (cueMap.get(track.number) ?? []).sort((a, b) => a.start - b.start);
-			// Cues without an explicit duration end when the next one starts.
-			for (let i = 0; i < cues.length; i++) {
-				const next = cues[i + 1];
-				if (cues[i].end <= cues[i].start) {
-					cues[i].end = next && next.start > cues[i].start ? next.start : cues[i].start + 3;
-				}
-			}
-			subtitles.push({ ...track, cues });
-		}
+		subtitles.push(...collect());
 	}
 
 	return {
@@ -762,7 +883,11 @@ function codecOf(tracks: MkvTrack[], trackNumber: number): string {
 	return tracks.find((track) => track.number === trackNumber)?.codecId ?? '';
 }
 
-/** Iterates over the top-level elements of a region, reading the file in windows. */
+/**
+ * Iterates over the top-level elements of a region, reading the file in
+ * windows. Elements that cross a window boundary are yielded with their full
+ * extent; the caller reads their contents separately.
+ */
 async function* iterateElements(
 	source: ByteSource,
 	start: number,
@@ -785,15 +910,15 @@ async function* iterateElements(
 			const dataStart = position + header.idLength + header.sizeLength;
 			const dataEnd = header.unknownSize ? windowEnd : dataStart + header.size;
 
+			yield { id: header.id, dataStart: offset + dataStart, dataEnd: offset + dataEnd };
+
+
 			if (dataEnd > windowEnd) {
-				// The element continues past the window: hand it over as-is and
-				// continue with the next window at the element's data.
-				yield { id: header.id, dataStart: offset + dataStart, dataEnd: offset + dataEnd };
-				position = dataStart;
+				// The element continues past the window: resume after it.
+				position = dataEnd;
 				break;
 			}
 
-			yield { id: header.id, dataStart: offset + dataStart, dataEnd: offset + dataEnd };
 			position = dataEnd;
 		}
 

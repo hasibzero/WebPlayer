@@ -3,6 +3,7 @@ import {
 	AudioBufferSink,
 	BlobSource,
 	CanvasSink,
+	CustomSource,
 	Input,
 	LogLevel,
 	Logging,
@@ -14,7 +15,14 @@ import {
 	type WrappedCanvas,
 } from 'mediabunny';
 
-import { blobByteSource, scanMatroska, urlByteSource, type ByteSource } from './mkv.ts';
+import {
+	blobByteSource,
+	enableDisabledTracks,
+	scanMatroska,
+	urlByteSource,
+	type ByteSource,
+	type MkvSubtitleTrack,
+} from './mkv.ts';
 import { formatBytes } from './format.ts';
 import type { SubtitleCue } from './subtitles.ts';
 
@@ -30,6 +38,7 @@ export type PlayerEventName =
 	| 'progress'
 	| 'subtitles'
 	| 'scan'
+	| 'scanprogress'
 	| 'buffering'
 	| 'ended'
 	| 'ratechange'
@@ -149,6 +158,29 @@ async function ensureDecoder(codec: string | null): Promise<void> {
 		loadedDecoders.delete(codec);
 		console.warn(`Could not load the ${codec} decoder`, error);
 	}
+}
+
+/** Number of header bytes read to inspect the container's track flags. */
+const HEADER_SIZE = 512 * 1024;
+
+/** Fetches a byte range from a remote resource. */
+async function fetchRange(
+	url: string,
+	requestInit: RequestInit | undefined,
+	start: number,
+	end: number,
+): Promise<Uint8Array> {
+	const response = await fetch(url, {
+		...requestInit,
+		headers: {
+			...(requestInit?.headers as Record<string, string> | undefined),
+			Range: `bytes=${start}-${Math.max(start, end - 1)}`,
+		},
+	});
+	if (!response.ok && response.status !== 206) {
+		throw new Error(`The server responded with ${response.status} ${response.statusText}.`);
+	}
+	return new Uint8Array(await response.arrayBuffer());
 }
 
 /**
@@ -434,6 +466,8 @@ export class MediaPlayer {
 	private scanSource: ByteSource | null = null;
 	private scanToken = 0;
 	private retriedWithDownload = false;
+	private enabledDisabledTracks = 0;
+	private enabledDisabledTrackNumbers: number[] = [];
 
 	private rafHandle = 0;
 	private readonly listeners = new Map<PlayerEventName, Set<(payload?: unknown) => void>>();
@@ -545,6 +579,16 @@ export class MediaPlayer {
 		return this.containerTracks;
 	}
 
+	/** How many tracks were flagged as disabled in the file and turned on. */
+	get enabledTrackCount(): number {
+		return this.enabledDisabledTracks;
+	}
+
+	/** The track numbers that were flagged as disabled and turned on. */
+	get enabledTrackNumbers(): number[] {
+		return this.enabledDisabledTrackNumbers;
+	}
+
 	/**
 	 * Re-reads the current remote file, optionally forcing a full download.
 	 * Useful when a server delivers the file in a way that confuses the
@@ -589,7 +633,7 @@ export class MediaPlayer {
 				this.remoteUrl = null;
 				this.remoteName = '';
 				this.scanSource = blobByteSource(source);
-				mediaSource = new BlobSource(source);
+				mediaSource = await this.createLocalSource(source);
 			}
 
 			if (generation !== this.generation) return false;
@@ -721,6 +765,38 @@ export class MediaPlayer {
 	}
 
 	/**
+	 * Builds the source for a local file, enabling tracks that the file flags
+	 * as disabled.
+	 */
+	private async createLocalSource(file: File): Promise<BlobSource> {
+		try {
+			const header = new Uint8Array(await file.slice(0, HEADER_SIZE).arrayBuffer());
+			const patch = enableDisabledTracks(header);
+			if (patch.enabledTracks > 0) {
+				this.noteEnabledTracks(patch.enabledTracks, patch.enabledTrackNumbers);
+				const regionEnd = Math.min(patch.regionEnd, header.length);
+				const patched = new Blob([
+					patch.bytes.slice(0, regionEnd).buffer as ArrayBuffer,
+					file.slice(regionEnd),
+				]);
+				return new BlobSource(patched);
+			}
+		} catch (error) {
+			console.warn('Could not inspect the container header', error);
+		}
+		return new BlobSource(file);
+	}
+
+	/** Remembers that tracks flagged as disabled were turned on. */
+	private noteEnabledTracks(count: number, trackNumbers: number[]): void {
+		this.enabledDisabledTracks = count;
+		this.enabledDisabledTrackNumbers = trackNumbers;
+		console.info(
+			`${count} track(s) marked as disabled in the file were enabled: ${trackNumbers.join(', ')}`,
+		);
+	}
+
+	/**
 	 * Scans the media container for subtitle tracks that the demuxer does not
 	 * expose (Matroska subtitle tracks) and reports them.
 	 */
@@ -732,6 +808,13 @@ export class MediaPlayer {
 		try {
 			const result = await scanMatroska(source, {
 				durationHint: this.endTimestamp || null,
+				onProgress: (loaded) => {
+					this.emit('scanprogress', { loaded, total: this.remoteSize });
+				},
+				onPartial: (tracks) => {
+					if (token !== this.scanToken || generation !== this.generation) return;
+					this.publishSubtitles(tracks);
+				},
 			});
 			if (token !== this.scanToken || generation !== this.generation) return;
 
@@ -760,20 +843,25 @@ export class MediaPlayer {
 				return;
 			}
 
-			const tracks: EmbeddedSubtitleTrack[] = result.subtitles
-				.filter((track) => track.cues.length > 0)
-				.map((track, index) => ({
-					id: `embedded-${index}`,
-					name: track.name ?? `Subtitle ${index + 1}`,
-					language: track.language,
-					cues: track.cues,
-				}));
-
-			this.embeddedSubtitleTracks = tracks;
-			if (tracks.length) this.emit('subtitles', tracks);
+			this.publishSubtitles(result.subtitles);
 		} catch (error) {
 			console.warn('Scanning the container for subtitles failed', error);
 		}
+	}
+
+	/** Publishes the subtitle tracks that were found in the container. */
+	private publishSubtitles(tracks: MkvSubtitleTrack[]): void {
+		const embedded: EmbeddedSubtitleTrack[] = tracks
+			.filter((track) => track.cues.length > 0)
+			.map((track, index) => ({
+				id: `embedded-${index}`,
+				name: track.name ?? `Subtitle ${index + 1}`,
+				language: track.language,
+				cues: track.cues,
+			}));
+
+		this.embeddedSubtitleTracks = embedded;
+		this.emit('subtitles', embedded);
 	}
 
 	/**
@@ -789,7 +877,7 @@ export class MediaPlayer {
 		url: string,
 		options: LoadOptions,
 		generation: number,
-	): Promise<UrlSource | BlobSource> {
+	): Promise<UrlSource | BlobSource | CustomSource> {
 		const requestInit = options.requestInit;
 		const capabilities = await probeSource(url, requestInit);
 		if (generation !== this.generation) throw new Error('Cancelled');
@@ -798,6 +886,35 @@ export class MediaPlayer {
 			this.streamingMode = 'ranged';
 			this.remoteSize = capabilities.size;
 			this.scanSource = urlByteSource(url, requestInit);
+
+			// Some files flag their extra tracks as disabled; turn them on.
+			const header = await fetchRange(url, requestInit, 0, HEADER_SIZE);
+			const patch = enableDisabledTracks(header);
+			if (patch.enabledTracks > 0) {
+				this.noteEnabledTracks(patch.enabledTracks, patch.enabledTrackNumbers);
+				const regionEnd = Math.min(patch.regionEnd, header.length);
+				const patched = patch.bytes.subarray(0, regionEnd);
+				const fileSize = capabilities.size ?? 0;
+				return new CustomSource({
+					getSize: () => fileSize,
+					read: async (start, end) => {
+						if (start >= regionEnd) {
+							return fetchRange(url, requestInit, start, end);
+						}
+						if (end <= regionEnd) {
+							return patched.slice(start, end);
+						}
+						const head = patched.slice(start, regionEnd);
+						const tail = await fetchRange(url, requestInit, regionEnd, end);
+						const merged = new Uint8Array(head.length + tail.length);
+						merged.set(head, 0);
+						merged.set(tail, head.length);
+						return merged;
+					},
+					maxCacheSize: 64 * 1024 * 1024,
+				});
+			}
+
 			return new UrlSource(url, requestInit ? { requestInit } : undefined);
 		}
 
