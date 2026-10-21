@@ -82,6 +82,10 @@ npm run build:extension   # builds the player into extension/dist
 3. Click **Load unpacked** and select the `extension` folder of this project.
 4. Pin the extension, then left-click any direct video link on a page.
 
+The extension runs on **every site** (`<all_urls>`) and inside embedded frames, so it works on
+pages that host the video in an iframe. The extension page's content security policy allows
+`'wasm-unsafe-eval'`, which the optional AC-3/DTS/ProRes decoders need.
+
 > Google Chrome 137+ blocks `--load-extension` on the command line, so unpacked extensions must be
 > loaded through the extensions page. Edge is unaffected.
 

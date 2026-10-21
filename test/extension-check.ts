@@ -33,13 +33,20 @@ function check(label: string, condition: boolean, detail = ''): void {
 	}
 }
 
-const pageHtml = `<!doctype html>
+	const pageHtml = `<!doctype html>
 <html><head><meta charset="utf-8"><title>Link test page</title></head>
 <body style="font: 16px sans-serif; padding: 40px">
 	<h1>Test page</h1>
 	<p><a id="video-link" href="/media/multi-audio.mkv">Download the multi-audio MKV</a></p>
 	<p><a id="page-link" href="/other.html">An ordinary link</a></p>
 	<p><a id="mp4-link" href="/media/movie.mp4">An mp4 file</a></p>
+	<iframe id="frame" src="/frame.html" width="640" height="240" style="border:1px solid #ccc"></iframe>
+</body></html>`;
+
+	const frameHtml = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Frame</title></head>
+<body style="font: 14px sans-serif; padding: 12px">
+	<p><a id="frame-link" href="/media/frame-video.mkv">A video link inside a frame</a></p>
 </body></html>`;
 
 let server: Server;
@@ -49,6 +56,17 @@ const { port } = await new Promise<{ port: number }>((resolvePromise) => {
 		if (url.pathname === '/') {
 			response.writeHead(200, { 'Content-Type': 'text/html' });
 			response.end(pageHtml);
+			return;
+		}
+		if (url.pathname === '/frame.html') {
+			response.writeHead(200, { 'Content-Type': 'text/html' });
+			response.end(frameHtml);
+			return;
+		}
+		if (url.pathname === '/media/frame-video.mkv') {
+			const data = await readFile(FIXTURE);
+			response.writeHead(200, { 'Content-Type': 'video/x-matroska', 'Content-Length': String(data.length) });
+			response.end(data);
 			return;
 		}
 		if (url.pathname === '/media/multi-audio.mkv') {
@@ -170,6 +188,38 @@ try {
 	await new Promise((r) => setTimeout(r, 700));
 	const navigated = page.url();
 	check('non-video link navigates normally', navigated.endsWith('/other.html'), navigated);
+
+	console.log('\n== links inside frames ==');
+	// The previous step navigated away, so go back to the test page first.
+	await page.goto(base, { waitUntil: 'networkidle2' });
+	const frameTarget = page.frames().find((frame) => frame.url().includes('/frame.html'));
+	let frameInfo: { hasFrame: boolean; menuInFrame: boolean; buttons: string[] } = {
+		hasFrame: Boolean(frameTarget),
+		menuInFrame: false,
+		buttons: [],
+	};
+	if (frameTarget) {
+		await frameTarget.click('#frame-link');
+		await new Promise((r) => setTimeout(r, 600));
+		frameInfo = await page.evaluate(() => {
+			const frame = document.getElementById('frame') as HTMLIFrameElement;
+			const doc = frame.contentDocument;
+			const host = doc
+				? Array.from(doc.querySelectorAll('div')).find((node) => node.shadowRoot?.querySelector('.menu'))
+				: null;
+			return {
+				hasFrame: Boolean(doc),
+				menuInFrame: Boolean(host),
+				buttons: host
+					? Array.from(host.shadowRoot!.querySelectorAll('button')).map((b) => b.getAttribute('data-action'))
+					: [],
+			};
+		});
+	}
+	console.log('  frame:', JSON.stringify(frameInfo));
+	check('the content script runs inside frames', frameInfo.hasFrame === true);
+	check('the menu appears for links in frames', frameInfo.menuInFrame === true, JSON.stringify(frameInfo));
+	check('the frame menu has the player entry', frameInfo.buttons.includes('player'), JSON.stringify(frameInfo.buttons));
 
 	console.log('\n== opening in the player ==');
 	await page.goto(base, { waitUntil: 'networkidle2' });
