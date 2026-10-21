@@ -301,6 +301,58 @@ try {
 	check('the top bar hides when the pointer stops', overlayState.topHidden === true);
 	check('the controls hide as well', overlayState.controlsHidden === true);
 
+	console.log('\n== quality control ==');
+	const qualityPage = await browser.newPage();
+	await qualityPage.setViewport({ width: 1400, height: 900 });
+	await qualityPage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+	const qualityInput = await qualityPage.$('#file-input');
+	await qualityInput!.uploadFile(resolve('test/fixtures/large.mkv'));
+	await qualityPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+	await new Promise((r) => setTimeout(r, 800));
+
+	const qualityState = await qualityPage.evaluate(async () => {
+		const select = document.getElementById('quality-select') as HTMLSelectElement;
+		const options = Array.from(select.options).map((option) => option.textContent ?? '');
+		const before = (window as any).__player.effectiveResolution;
+
+		// Pick the first scaled option.
+		const target = Array.from(select.options).find(
+			(option) => option.value !== 'source',
+		);
+		if (target) {
+			select.value = target.value;
+			select.dispatchEvent(new Event('change'));
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+		}
+
+		const after = (window as any).__player.effectiveResolution;
+		const canvas = document.getElementById('video-canvas') as HTMLCanvasElement;
+		const note = document.getElementById('quality-note') as HTMLParagraphElement;
+
+		// Playback must continue across the change.
+		await (window as any).__player.play();
+		const timeBefore = (window as any).__player.getMediaTime();
+		await new Promise((resolve) => setTimeout(resolve, 1200));
+		const timeAfter = (window as any).__player.getMediaTime();
+
+		return {
+			options,
+			before: { width: before.width, height: before.height, scaled: before.scaled },
+			after: { width: after.width, height: after.height, scaled: after.scaled },
+			canvasWidth: canvas.width,
+			noteVisible: !note.hidden,
+			note: note.textContent,
+			stillPlaying: timeAfter > timeBefore,
+		};
+	});
+	console.log('  quality:', JSON.stringify(qualityState));
+	check('quality options are listed', qualityState.options.length > 1, JSON.stringify(qualityState.options));
+	check('the source resolution is offered', qualityState.options[0]?.includes('Source') === true, qualityState.options[0]);
+	check('selecting a quality changes the render size', qualityState.after.width < qualityState.before.width, JSON.stringify(qualityState));
+	check('the canvas follows the quality', qualityState.canvasWidth === qualityState.after.width, `${qualityState.canvasWidth} vs ${qualityState.after.width}`);
+	check('the scaling is explained', qualityState.noteVisible === true, qualityState.note);
+	check('playback continues after the change', qualityState.stillPlaying === true);
+
 	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
 	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
 } finally {
