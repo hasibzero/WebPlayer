@@ -11,6 +11,8 @@ export interface SubtitleTrack {
 	name: string;
 	language: string;
 	cues: SubtitleCue[];
+	/** Where the track came from. */
+	source?: 'embedded' | 'sidecar';
 }
 
 /* ------------------------------------------------------------- timestamp */

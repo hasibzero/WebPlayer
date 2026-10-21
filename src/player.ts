@@ -14,6 +14,10 @@ import {
 	type WrappedCanvas,
 } from 'mediabunny';
 
+import { blobByteSource, scanMatroska, urlByteSource, type ByteSource } from './mkv.ts';
+import { formatBytes } from './format.ts';
+import type { SubtitleCue } from './subtitles.ts';
+
 /* ------------------------------------------------------------------ types */
 
 export type PlayerEventName =
@@ -24,6 +28,8 @@ export type PlayerEventName =
 	| 'trackschange'
 	| 'loading'
 	| 'progress'
+	| 'subtitles'
+	| 'scan'
 	| 'buffering'
 	| 'ended'
 	| 'ratechange'
@@ -65,6 +71,13 @@ export interface AudioChannelState {
 	info: AudioTrackInfo;
 	enabled: boolean;
 	volume: number;
+}
+
+export interface EmbeddedSubtitleTrack {
+	id: string;
+	name: string;
+	language: string;
+	cues: SubtitleCue[];
 }
 
 export interface MediaSummary {
@@ -138,8 +151,45 @@ async function ensureDecoder(codec: string | null): Promise<void> {
 	}
 }
 
-/* ----------------------------------------------------------------- player */
+/**
+ * A byte source for servers that cannot serve ranges: the file is downloaded
+ * once in the background and then served from memory.
+ */
+function cachingByteSource(
+	url: string,
+	requestInit: RequestInit | undefined,
+	onProgress?: (loaded: number, total: number | null) => void,
+): ByteSource {
+	let blob: Blob | null = null;
+	let pending: Promise<Blob> | null = null;
 
+	const load = (): Promise<Blob> => {
+		if (!pending) {
+			pending = downloadToBlob(url, requestInit, (loaded, total) => onProgress?.(loaded, total)).catch(
+				(error) => {
+					pending = null;
+					throw error;
+				},
+			);
+		}
+		return pending;
+	};
+
+	return {
+		get size() {
+			return blob?.size ?? 0;
+		},
+		async ready() {
+			blob = await load();
+		},
+		async slice(start, end) {
+			if (!blob) blob = await load();
+			return new Uint8Array(await blob.slice(start, end).arrayBuffer());
+		},
+	};
+}
+
+/* ----------------------------------------------------------------- player */
 export interface LoadOptions {
 	/** Additional fetch options used when the source is a URL. */
 	requestInit?: RequestInit;
@@ -300,9 +350,12 @@ async function downloadToBlob(
 		throw new Error(`The server responded with ${response.status} ${response.statusText}.`);
 	}
 
-	const total = Number(response.headers.get('Content-Length')) || null;
+	const expected = Number(response.headers.get('Content-Length')) || null;
+	const total = expected;
 	if (!response.body) {
-		return response.blob();
+		const blob = await response.blob();
+		onProgress(blob.size, blob.size);
+		return blob;
 	}
 
 	const reader = response.body.getReader();
@@ -323,6 +376,16 @@ async function downloadToBlob(
 	if (blob.size === 0) {
 		throw new Error('The server returned an empty response.');
 	}
+
+	// A truncated download would produce a file that is missing tracks, so it
+	// has to be treated as a failure.
+	if (expected !== null && blob.size !== expected) {
+		throw new Error(
+			`The download was incomplete (${formatBytes(blob.size)} of ${formatBytes(expected)}). `
+			+ 'The server closed the connection early — please try again.',
+		);
+	}
+
 	onProgress(blob.size, blob.size);
 	return blob;
 }
@@ -366,6 +429,11 @@ export class MediaPlayer {
 	private remoteName = '';
 	private remoteRequestInit: RequestInit | undefined;
 	private restoreLogLevel: LogLevel | null = null;
+	private embeddedSubtitleTracks: EmbeddedSubtitleTrack[] = [];
+	private containerTracks = { video: 0, audio: 0, subtitle: 0, total: 0 };
+	private scanSource: ByteSource | null = null;
+	private scanToken = 0;
+	private retriedWithDownload = false;
 
 	private rafHandle = 0;
 	private readonly listeners = new Map<PlayerEventName, Set<(payload?: unknown) => void>>();
@@ -464,6 +532,19 @@ export class MediaPlayer {
 		return this.remoteUrl;
 	}
 
+	/** Subtitle tracks that were found inside the media file itself. */
+	get embeddedSubtitles(): EmbeddedSubtitleTrack[] {
+		return this.embeddedSubtitleTracks;
+	}
+
+	/**
+	 * Number of tracks of each type as declared by the container. This can
+	 * differ from what the demuxer reports when a file is delivered incompletely.
+	 */
+	get containerTrackCounts(): { video: number; audio: number; subtitle: number; total: number } {
+		return this.containerTracks;
+	}
+
 	/**
 	 * Re-reads the current remote file, optionally forcing a full download.
 	 * Useful when a server delivers the file in a way that confuses the
@@ -507,6 +588,7 @@ export class MediaPlayer {
 				this.streamingMode = 'local';
 				this.remoteUrl = null;
 				this.remoteName = '';
+				this.scanSource = blobByteSource(source);
 				mediaSource = new BlobSource(source);
 			}
 
@@ -626,11 +708,71 @@ export class MediaPlayer {
 				videoTracks: this.videoTracks,
 				audioTracks: this.audioChannels.map((c) => c.info),
 			});
+
+			// Look for subtitle tracks the demuxer does not expose (Matroska).
+			void this.scanForSubtitles(generation);
+
 			return true;
 		} catch (error) {
 			console.error(error);
 			this.emit('error', error instanceof Error ? error : new Error(String(error)));
 			return false;
+		}
+	}
+
+	/**
+	 * Scans the media container for subtitle tracks that the demuxer does not
+	 * expose (Matroska subtitle tracks) and reports them.
+	 */
+	private async scanForSubtitles(generation: number): Promise<void> {
+		const source = this.scanSource;
+		if (!source) return;
+
+		const token = ++this.scanToken;
+		try {
+			const result = await scanMatroska(source, {
+				durationHint: this.endTimestamp || null,
+			});
+			if (token !== this.scanToken || generation !== this.generation) return;
+
+			this.containerTracks = {
+				video: result.tracks.filter((track) => track.type === 'video').length,
+				audio: result.tracks.filter((track) => track.type === 'audio').length,
+				subtitle: result.tracks.filter((track) => track.type === 'subtitle').length,
+				total: result.tracks.length,
+			};
+			this.emit('scan', this.containerTracks);
+
+			// The container knows about more audio tracks than the demuxer found:
+			// the file was most likely delivered incompletely. Fetch it completely
+			// and parse it again.
+			if (
+				this.remoteUrl &&
+				!this.retriedWithDownload &&
+				this.containerTracks.audio > this.audioChannels.length
+			) {
+				this.retriedWithDownload = true;
+				console.info(
+					`The container declares ${this.containerTracks.audio} audio tracks but only `
+					+ `${this.audioChannels.length} could be read — downloading the file completely.`,
+				);
+				void this.reloadRemote(true);
+				return;
+			}
+
+			const tracks: EmbeddedSubtitleTrack[] = result.subtitles
+				.filter((track) => track.cues.length > 0)
+				.map((track, index) => ({
+					id: `embedded-${index}`,
+					name: track.name ?? `Subtitle ${index + 1}`,
+					language: track.language,
+					cues: track.cues,
+				}));
+
+			this.embeddedSubtitleTracks = tracks;
+			if (tracks.length) this.emit('subtitles', tracks);
+		} catch (error) {
+			console.warn('Scanning the container for subtitles failed', error);
 		}
 	}
 
@@ -655,6 +797,7 @@ export class MediaPlayer {
 		if (capabilities.supportsRanges && capabilities.reliableRanges) {
 			this.streamingMode = 'ranged';
 			this.remoteSize = capabilities.size;
+			this.scanSource = urlByteSource(url, requestInit);
 			return new UrlSource(url, requestInit ? { requestInit } : undefined);
 		}
 
@@ -673,6 +816,9 @@ export class MediaPlayer {
 			// Small enough to keep the whole thing in memory: seeking just works.
 			this.streamingMode = 'cached';
 			this.remoteSize = size;
+			// Subtitles are read from a separate background copy, because the
+			// server cannot serve the byte ranges the scanner needs.
+			this.scanSource = cachingByteSource(url, requestInit);
 			return new UrlSource(url, {
 				...(requestInit ? { requestInit } : {}),
 				maxCacheSize: Infinity,
@@ -689,6 +835,7 @@ export class MediaPlayer {
 		if (generation !== this.generation) throw new Error('Cancelled');
 
 		this.remoteSize = blob.size;
+		this.scanSource = blobByteSource(blob);
 		return new BlobSource(blob);
 	}
 
@@ -1142,6 +1289,7 @@ export class MediaPlayer {
 		this.videoToken++;
 		this.generation++;
 		this.restoreLogging();
+		this.retriedWithDownload = false;
 
 		for (const channel of this.audioChannels) {
 			this.stopAudioChannel(channel);

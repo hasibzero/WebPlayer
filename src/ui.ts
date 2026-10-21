@@ -1,8 +1,8 @@
-import type { AudioChannelState, MediaPlayer, VideoTrackInfo } from './player';
-import { describeChannels } from './player';
-import { codecName, formatBitrate, formatBytes, formatTime, languageName } from './format';
-import type { Chapter } from './mkv';
-import type { SubtitleTrack } from './subtitles';
+import type { AudioChannelState, MediaPlayer, VideoTrackInfo } from './player.ts';
+import { describeChannels } from './player.ts';
+import { codecName, formatBitrate, formatBytes, formatTime, languageName } from './format.ts';
+import type { Chapter } from './mkv.ts';
+import type { SubtitleTrack } from './subtitles.ts';
 
 export interface UICallbacks {
 	onOpenFile: () => void;
@@ -545,6 +545,12 @@ export class PlayerUI {
 			langTag.className = 'tag';
 			langTag.textContent = languageName(track.language);
 			name.append(langTag);
+			if (track.source === 'embedded') {
+				const tag = document.createElement('span');
+				tag.className = 'tag';
+				tag.textContent = 'in file';
+				name.append(tag);
+			}
 
 			const sub = document.createElement('div');
 			sub.className = 'track-sub';

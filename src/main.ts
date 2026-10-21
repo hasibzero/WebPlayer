@@ -1,10 +1,10 @@
 import './styles.css';
 
-import { MediaPlayer } from './player';
-import { PlayerUI } from './ui';
-import { readMkvChapters } from './mkv';
-import { parseSubtitleText, SubtitleRenderer, type SubtitleTrack } from './subtitles';
-import { codecName, formatBytes, formatTime, languageName } from './format';
+import { MediaPlayer } from './player.ts';
+import { PlayerUI } from './ui.ts';
+import { readMkvChapters } from './mkv.ts';
+import { parseSubtitleText, SubtitleRenderer, type SubtitleTrack } from './subtitles.ts';
+import { codecName, formatBytes, formatTime, languageName } from './format.ts';
 
 const canvas = document.getElementById('video-canvas') as HTMLCanvasElement;
 const subtitleOverlay = document.getElementById('subtitle-overlay') as HTMLDivElement;
@@ -206,6 +206,25 @@ function refreshMediaDetails(): void {
 		['Audio tracks', String(audioCount)],
 	];
 	if (player.size) info.push(['Size', formatBytes(player.size)]);
+
+	const container = player.containerTrackCounts;
+	if (container.total > 0) {
+		info.push([
+			'In container',
+			`${container.video} video, ${container.audio} audio, ${container.subtitle} subtitle`,
+		]);
+	}
+
+	// The demuxer can miss tracks when a file arrives incomplete.
+	if (container.audio > audioCount) {
+		info.push(['Missing tracks', `${container.audio - audioCount} audio track(s) not detected`]);
+		ui.toast(
+			`The file declares ${container.audio} audio tracks but only ${audioCount} could be read. `
+			+ 'The download is probably incomplete — use "Re-download & re-scan".',
+			true,
+		);
+	}
+
 	ui.setMediaInfo(info);
 }
 
@@ -323,10 +342,31 @@ player.on('timeupdate', (time) => {
 	if (activeSubtitleId !== null) subtitleRenderer.update(time as number);
 });
 
+player.on('subtitles', (payload) => {
+	const embedded = payload as SubtitleTrack[];
+	if (!embedded.length) return;
+
+	subtitleTracks = subtitleTracks.filter((track) => track.source !== 'embedded');
+	for (const track of embedded) {
+		subtitleTracks.push({ ...track, source: 'embedded' });
+	}
+
+	ui.renderSubtitles(subtitleTracks, activeSubtitleId);
+
+	if (activeSubtitleId === null) {
+		const first = subtitleTracks[0];
+		if (first) selectSubtitle(first.id);
+	}
+});
+
 player.on('trackschange', () => {
 	if (player.isLoaded) {
 		ui.setMediaTitle(currentMediaName || 'Media', describeCurrentMedia());
 	}
+});
+
+player.on('scan', () => {
+	refreshMediaDetails();
 });
 
 player.on('ready', () => {
