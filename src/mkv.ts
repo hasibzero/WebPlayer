@@ -10,7 +10,7 @@
  * Only the parts of EBML needed for that are implemented.
  */
 
-import { parseSubtitleText, type SubtitleCue } from './subtitles.ts';
+import type { SubtitleCue } from './subtitles.ts';
 
 export interface Chapter {
 	title: string;
@@ -94,7 +94,6 @@ const ID = {
 const CONTAINERS = new Set<number>([ID.SEGMENT, ID.EDITION_ENTRY, ID.CHAPTER_ATOM, ID.CHAPTER_DISPLAY]);
 
 const DEFAULT_TIMESTAMP_SCALE = 1_000_000;
-const WINDOW_SIZE = 16 * 1024 * 1024;
 
 /* ------------------------------------------------------------ primitives */
 
@@ -224,26 +223,6 @@ function readHeader(data: Uint8Array, offset: number): ElementHeader | null {
 		sizeLength: size.length,
 		unknownSize: size.unknown,
 	};
-}
-
-/**
- * Reads an EBML variable-length integer. The leading marker bits encode the
- * length and are not part of the value (same as element sizes).
- */
-function readVint(data: Uint8Array, offset: number): { value: number; length: number } | null {
-	const first = data[offset];
-	if (first === undefined) return null;
-	let length = 1;
-	let mask = 0x80;
-	while (length <= 8 && !(first & mask)) {
-		mask >>= 1;
-		length++;
-	}
-	if (length > 8 || offset + length > data.length) return null;
-
-	let value = first & (mask - 1);
-	for (let i = 1; i < length; i++) value = value * 256 + data[offset + i];
-	return { value, length };
 }
 
 function readUint(data: Uint8Array, range: Range): number {
@@ -594,130 +573,6 @@ function pickTimeReader(
 
 const TEXT_CODECS = new Set(['s_text/utf8', 's_text/ass', 's_text/ssa', 's_text/webvtt', 's_text/ascii']);
 
-/**
- * Parses the payload of a text subtitle block into cues.
- *
- * Matroska stores the cue time in the block header, so the payload usually
- * contains the plain text only. Some codecs (ASS) embed their own timings.
- */
-function parseSubtitlePayload(
-	codecId: string,
-	payload: string,
-	blockTime: number,
-	blockDuration: number | null,
-): SubtitleCue[] {
-	if (!payload.trim()) return [];
-
-	const codec = codecId.toLowerCase();
-
-	if (codec === 's_text/ass' || codec === 's_text/ssa') {
-		// The payload is a single ASS dialogue line.
-		const dialogue = payload.trim();
-		const separator = dialogue.indexOf(':');
-		if (separator !== -1) {
-			const fields = dialogue.slice(separator + 1).split(',');
-			if (fields.length >= 10) {
-				const start = parseAssTime(fields[1]);
-				const end = parseAssTime(fields[2]);
-				if (start !== null && end !== null) {
-					const text = fields
-						.slice(9)
-						.join(',')
-						.replace(/\{[^}]*\}/g, '')
-						.replace(/\\N/gi, '\n');
-					if (text.trim()) return [{ start, end, text }];
-				}
-			}
-		}
-	}
-
-	// SRT / WebVTT style payloads may carry their own timestamps.
-	const embedded = parseSubtitleText(payload);
-	if (embedded.length) return embedded;
-
-	// Plain text: the block header holds the timing.
-	const text = payload
-		.replace(/\r\n/g, '\n')
-		.replace(/<\/?(?:i|b|u|s|font|r)(?:\s[^>]*)?>/gi, '')
-		.trim();
-	if (!text) return [];
-	return [{ start: blockTime, end: blockTime + (blockDuration ?? 3), text }];
-}
-
-function parseAssTime(raw: string): number | null {
-	const match = raw.trim().match(/^(\d+):(\d{1,2}):(\d{1,2})[.,](\d{1,3})$/);
-	if (!match) return null;
-	return (
-		Number(match[1]) * 3600 +
-		Number(match[2]) * 60 +
-		Number(match[3]) +
-		Number(match[4].padEnd(3, '0')) / 1000
-	);
-}
-
-interface SubtitleBlock {
-	trackNumber: number;
-	timestamp: number;
-	duration: number | null;
-	payload: Uint8Array;
-}
-
-/** Parses the blocks of a single cluster. */
-function parseCluster(data: Uint8Array, clusterTimecode: number, scale: number): SubtitleBlock[] {
-	const blocks: SubtitleBlock[] = [];
-
-	for (const child of children(data, { start: 0, end: data.length })) {
-		if (child.id === ID.SIMPLE_BLOCK) {
-			const block = parseBlock(data, child.range, clusterTimecode, scale, null);
-			if (block) blocks.push(block);
-		} else if (child.id === ID.BLOCK_GROUP) {
-			let blockData: Range | null = null;
-			let duration: number | null = null;
-			for (const field of children(data, child.range)) {
-				if (field.id === ID.BLOCK) blockData = field.range;
-				else if (field.id === ID.BLOCK_DURATION) duration = readUint(data, field.range);
-			}
-			if (blockData) {
-				const block = parseBlock(data, blockData, clusterTimecode, scale, duration);
-				if (block) blocks.push(block);
-			}
-		}
-	}
-
-	return blocks;
-}
-
-function parseBlock(
-	data: Uint8Array,
-	range: Range,
-	clusterTimecode: number,
-	scale: number,
-	duration: number | null,
-): SubtitleBlock | null {
-	const trackVint = readVint(data, range.start);
-	if (!trackVint) return null;
-
-	let offset = range.start + trackVint.length;
-	if (offset + 3 > range.end) return null;
-
-	const relative = (data[offset] << 8) | data[offset + 1];
-	offset += 2;
-	const flags = data[offset];
-	offset += 1;
-
-	const lacing = (flags >> 1) & 0x03;
-	if (lacing !== 0) return null; // Only un-laced blocks are handled
-
-	const payload = data.subarray(offset, range.end);
-	const timestamp = ((clusterTimecode + relative) * scale) / 1e9;
-
-	return {
-		trackNumber: trackVint.value,
-		timestamp,
-		duration: duration !== null ? (duration * scale) / 1e9 : null,
-		payload,
-	};
-}
 
 /* ----------------------------------------------------------------- scan */
 
@@ -812,62 +667,10 @@ export async function scanMatroska(
 
 	const subtitles: MkvSubtitleTrack[] = [];
 
-	if (subtitleTracks.length && segment) {
-		const cueMap = new Map<number, SubtitleCue[]>();
-		for (const track of subtitleTracks) cueMap.set(track.number, []);
-
-		const segmentStart = segment.start;
-		const segmentEnd = Math.min(segment.end, knownSize);
-
-		const collect = (): MkvSubtitleTrack[] =>
-			subtitleTracks.map((track) => {
-				const cues = (cueMap.get(track.number) ?? []).sort((a, b) => a.start - b.start);
-				// Cues without an explicit duration end when the next one starts.
-				for (let i = 0; i < cues.length; i++) {
-					const next = cues[i + 1];
-					if (cues[i].end <= cues[i].start) {
-						cues[i].end = next && next.start > cues[i].start ? next.start : cues[i].start + 3;
-					}
-				}
-				return { ...track, cues };
-			});
-
-		let clusterCount = 0;
-
-		for await (const element of iterateElements(source, segmentStart, segmentEnd)) {
-			if (element.id !== ID.CLUSTER) continue;
-
-			const clusterData = await readRange(source, element.dataStart, element.dataEnd);
-			let clusterTimecode = 0;
-			for (const child of children(clusterData, { start: 0, end: clusterData.length })) {
-				if (child.id === ID.TIMECODE) {
-					clusterTimecode = readUint(clusterData, child.range);
-					break;
-				}
-			}
-
-			for (const block of parseCluster(clusterData, clusterTimecode, timestampScale)) {
-				const cues = cueMap.get(block.trackNumber);
-				if (!cues) continue;
-				const text = new TextDecoder('utf-8').decode(block.payload);
-				const parsed = parseSubtitlePayload(
-					codecOf(subtitleTracks, block.trackNumber),
-					text,
-					block.timestamp,
-					block.duration,
-				);
-				for (const cue of parsed) cues.push(cue);
-			}
-
-			options.onProgress?.(element.dataEnd);
-
-			// Report what has been found so far, so that the cues show up while
-			// the rest of the file is still being scanned.
-			clusterCount += 1;
-			if (clusterCount % 5 === 0) options.onPartial?.(collect());
-		}
-
-		subtitles.push(...collect());
+	// The cues themselves are read by the subtitle scanner, which follows the
+	// playhead instead of crawling through the whole file.
+	for (const track of subtitleTracks) {
+		subtitles.push({ ...track, cues: [] });
 	}
 
 	return {
@@ -877,54 +680,6 @@ export async function scanMatroska(
 		timestampScale,
 		isMatroska: true,
 	};
-}
-
-function codecOf(tracks: MkvTrack[], trackNumber: number): string {
-	return tracks.find((track) => track.number === trackNumber)?.codecId ?? '';
-}
-
-/**
- * Iterates over the top-level elements of a region, reading the file in
- * windows. Elements that cross a window boundary are yielded with their full
- * extent; the caller reads their contents separately.
- */
-async function* iterateElements(
-	source: ByteSource,
-	start: number,
-	end: number,
-): AsyncGenerator<{ id: number; dataStart: number; dataEnd: number }> {
-	let offset = start;
-
-	while (offset < end) {
-		const windowEnd = Math.min(end, offset + WINDOW_SIZE);
-		const data = await readRange(source, offset, windowEnd);
-		let position = 0;
-
-		while (position < data.length) {
-			const header = readHeader(data, position);
-			if (!header) {
-				position = data.length;
-				break;
-			}
-
-			const dataStart = position + header.idLength + header.sizeLength;
-			const dataEnd = header.unknownSize ? windowEnd : dataStart + header.size;
-
-			yield { id: header.id, dataStart: offset + dataStart, dataEnd: offset + dataEnd };
-
-
-			if (dataEnd > windowEnd) {
-				// The element continues past the window: resume after it.
-				position = dataEnd;
-				break;
-			}
-
-			position = dataEnd;
-		}
-
-		if (position <= 0) break;
-		offset += position;
-	}
 }
 
 /**

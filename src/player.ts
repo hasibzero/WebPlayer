@@ -21,8 +21,8 @@ import {
 	scanMatroska,
 	urlByteSource,
 	type ByteSource,
-	type MkvSubtitleTrack,
 } from './mkv.ts';
+import { SubtitleScanner } from './subtitle-scan.ts';
 import { formatBytes } from './format.ts';
 import type { SubtitleCue } from './subtitles.ts';
 
@@ -465,6 +465,8 @@ export class MediaPlayer {
 	private containerTracks = { video: 0, audio: 0, subtitle: 0, total: 0 };
 	private scanSource: ByteSource | null = null;
 	private scanToken = 0;
+	private subtitleScanner: SubtitleScanner | null = null;
+	private lastScanRequest = -1;
 	private retriedWithDownload = false;
 	private enabledDisabledTracks = 0;
 	private enabledDisabledTrackNumbers: number[] = [];
@@ -798,7 +800,7 @@ export class MediaPlayer {
 
 	/**
 	 * Scans the media container for subtitle tracks that the demuxer does not
-	 * expose (Matroska subtitle tracks) and reports them.
+	 * expose (Matroska subtitle tracks) and starts reading their cues.
 	 */
 	private async scanForSubtitles(generation: number): Promise<void> {
 		const source = this.scanSource;
@@ -806,16 +808,7 @@ export class MediaPlayer {
 
 		const token = ++this.scanToken;
 		try {
-			const result = await scanMatroska(source, {
-				durationHint: this.endTimestamp || null,
-				onProgress: (loaded) => {
-					this.emit('scanprogress', { loaded, total: this.remoteSize });
-				},
-				onPartial: (tracks) => {
-					if (token !== this.scanToken || generation !== this.generation) return;
-					this.publishSubtitles(tracks);
-				},
-			});
+			const result = await scanMatroska(source, { durationHint: this.endTimestamp || null });
 			if (token !== this.scanToken || generation !== this.generation) return;
 
 			this.containerTracks = {
@@ -843,14 +836,44 @@ export class MediaPlayer {
 				return;
 			}
 
-			this.publishSubtitles(result.subtitles);
+			// Every text subtitle track is offered, including the ones the file
+			// flags as disabled — those are exactly the ones the user misses.
+			const subtitleTracks = result.subtitles;
+			if (!subtitleTracks.length) return;
+
+			this.subtitleScanner = new SubtitleScanner({
+				source: {
+					size: source.size,
+					slice: (start, end) => source.slice(start, end),
+				},
+				tracks: subtitleTracks.map((track) => ({ number: track.number, codecId: track.codecId })),
+				timestampScale: result.timestampScale,
+				onUpdate: (tracks) => {
+					if (token !== this.scanToken || generation !== this.generation) return;
+					this.publishSubtitles(
+						tracks.map((entry) => {
+							const track = subtitleTracks.find((item) => item.number === entry.number);
+							return {
+								number: entry.number,
+								name: track?.name ?? null,
+								language: track?.language ?? 'und',
+								cues: entry.cues,
+							};
+						}),
+					);
+				},
+			});
+
+			this.subtitleScanner.request(this.getMediaTime());
 		} catch (error) {
 			console.warn('Scanning the container for subtitles failed', error);
 		}
 	}
 
 	/** Publishes the subtitle tracks that were found in the container. */
-	private publishSubtitles(tracks: MkvSubtitleTrack[]): void {
+	private publishSubtitles(
+		tracks: Array<{ number: number; name: string | null; language: string; cues: SubtitleCue[] }>,
+	): void {
 		const embedded: EmbeddedSubtitleTrack[] = tracks
 			.filter((track) => track.cues.length > 0)
 			.map((track, index) => ({
@@ -1292,6 +1315,12 @@ export class MediaPlayer {
 			void this.updateNextFrame();
 		}
 
+		// Keep the subtitle scanner a bit ahead of the playhead.
+		if (this.subtitleScanner && time - this.lastScanRequest > 1) {
+			this.lastScanRequest = time;
+			this.subtitleScanner.request(time);
+		}
+
 		this.emit('timeupdate', time);
 	};
 
@@ -1352,6 +1381,9 @@ export class MediaPlayer {
 		for (const channel of this.audioChannels) {
 			if (channel.enabled && this.playing) this.startAudioChannel(channel);
 		}
+
+		// The subtitle scanner follows the playhead, so it has to jump too.
+		void this.subtitleScanner?.seek(clamped);
 
 		this.emit('seeked', clamped);
 		this.emit('timeupdate', clamped);
