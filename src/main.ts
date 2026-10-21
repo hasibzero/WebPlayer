@@ -337,8 +337,17 @@ async function openUrl(url: string, name?: string): Promise<void> {
 
 	if (!loaded) {
 		ui.setLoading(false);
-		ui.toast(describeUrlError(), true);
+		ui.toast(describeUrlError(), true, [
+			{ label: 'Get the browser extension', href: EXTENSION_PAGE },
+			{
+				label: 'Copy the link',
+				onClick: () => {
+					void navigator.clipboard?.writeText(currentMediaUrl);
+				},
+			},
+		]);
 		ui.setStatus('Could not open the URL');
+		ui.setRemoteHint(true);
 		return;
 	}
 
@@ -362,6 +371,8 @@ function requestInitForUrl(): RequestInit | undefined {
 	return isExtension ? { credentials: 'include' } : undefined;
 }
 
+const EXTENSION_PAGE = 'https://github.com/hasibzero/WebPlayer';
+
 function describeUrlError(): string {
 	const message = lastErrorMessage;
 	lastErrorMessage = '';
@@ -370,11 +381,13 @@ function describeUrlError(): string {
 	// blocks it as mixed content before the request even goes out.
 	if (location.protocol === 'https:' && /^http:\/\//i.test(currentMediaUrl)) {
 		return 'This page is served over HTTPS, so the browser refuses to load an HTTP:// video '
-			+ '(mixed content). Use the browser extension, or an HTTPS:// link.';
+			+ '(mixed content). The browser extension can open it — make sure the extension is '
+			+ 'installed and up to date.';
 	}
 
 	if (/cors|cross-origin|failed to fetch|networkerror|load failed|mixed content/i.test(message)) {
-		return 'The server refused the request (CORS). Install the browser extension to bypass this restriction.';
+		return 'The server refused the request (CORS). The browser extension can open it anyway — '
+			+ 'make sure the extension is installed and up to date.';
 	}
 	return `Could not open that URL: ${message || 'unknown error'}`;
 }

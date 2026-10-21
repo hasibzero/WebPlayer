@@ -77,6 +77,7 @@ export class PlayerUI {
 	private readonly mediaInfo = el<HTMLDListElement>('media-info');
 	private readonly rescanActions = el<HTMLDivElement>('rescan-actions');
 	private readonly rescanHint = el<HTMLParagraphElement>('rescan-hint');
+	private readonly remoteHint = el<HTMLParagraphElement>('remote-hint');
 
 	private readonly statusText = el<HTMLSpanElement>('status-text');
 	private readonly statusRight = el<HTMLSpanElement>('status-right');
@@ -391,14 +392,40 @@ export class PlayerUI {
 		this.statusText.textContent = text;
 	}
 
-	toast(message: string, isError = false): void {
-		this.toastElement.textContent = message;
+	toast(
+		message: string,
+		isError = false,
+		actions?: Array<{ label: string; href?: string; onClick?: () => void }>,
+	): void {
+		this.toastElement.textContent = '';
 		this.toastElement.classList.toggle('error', isError);
+
+		const text = document.createElement('div');
+		text.textContent = message;
+		this.toastElement.append(text);
+
+		for (const action of actions ?? []) {
+			const button = document.createElement('button');
+			button.className = 'toast-action';
+			button.textContent = action.label;
+			if (action.href) {
+				button.addEventListener('click', () => {
+					window.open(action.href, '_blank', 'noopener');
+				});
+			} else {
+				button.addEventListener('click', () => {
+					action.onClick?.();
+					this.toastElement.hidden = true;
+				});
+			}
+			this.toastElement.append(button);
+		}
+
 		this.toastElement.hidden = false;
 		clearTimeout(this.toastTimeout);
 		this.toastTimeout = window.setTimeout(() => {
 			this.toastElement.hidden = true;
-		}, isError ? 6000 : 2600);
+		}, isError ? 20000 : 2600);
 	}
 
 	setPanelCollapsed(collapsed: boolean): void {
@@ -631,6 +658,13 @@ export class PlayerUI {
 			dd.title = value;
 			this.mediaInfo.append(dt, dd);
 		}
+	}
+
+	/**
+	 * Shows the hint about third-party links that need the extension.
+	 */
+	setRemoteHint(visible: boolean): void {
+		this.remoteHint.hidden = !visible;
 	}
 
 	/**
