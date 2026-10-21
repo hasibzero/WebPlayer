@@ -175,6 +175,45 @@ try {
 	check('chapter titles', chapterInfo[0]?.title === 'Opening' && chapterInfo[1]?.title === 'Main story', JSON.stringify(chapterInfo));
 	check('chapter timestamps', chapterInfo[1]?.time === '0:03', String(chapterInfo[1]?.time));
 
+	console.log('\n== embedded subtitles ==');
+	const subPage = await browser.newPage();
+	await subPage.setViewport({ width: 1400, height: 900 });
+	const subErrors: string[] = [];
+	subPage.on('pageerror', (error) => subErrors.push(error.message));
+	await subPage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+	const subInput = await subPage.$('#file-input');
+	await subInput!.uploadFile(resolve('test/fixtures/multi-audio-subs.mkv'));
+	await subPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+	await subPage.waitForFunction(
+		() => document.querySelectorAll('#subtitle-list .track-card').length > 0,
+		{ timeout: 30000 },
+	);
+
+	const subState = await subPage.evaluate(async () => {
+		const player = (window as any).__player;
+		await player.seek(1.5);
+		await new Promise((resolve) => setTimeout(resolve, 700));
+		const info = document.getElementById('media-info')?.textContent ?? '';
+		return {
+			embedded: player.embeddedSubtitles.length,
+			cues: player.embeddedSubtitles[0]?.cues.length ?? 0,
+			cards: document.querySelectorAll('#subtitle-list .track-card').length,
+			overlay: document.getElementById('subtitle-overlay')?.textContent?.trim() ?? '',
+			audioCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			container: player.containerTrackCounts,
+			infoHasContainer: info.includes('In container'),
+		};
+	});
+	console.log('  subtitle state:', JSON.stringify(subState));
+	check('embedded subtitle track detected', subState.embedded === 1, String(subState.embedded));
+	check('embedded cues extracted', subState.cues === 3, String(subState.cues));
+	check('subtitle listed in the panel', subState.cards === 1, String(subState.cards));
+	check('cue rendered on the video', subState.overlay.includes('First subtitle line'), JSON.stringify(subState.overlay));
+	check('audio tracks still listed', subState.audioCards === 3, String(subState.audioCards));
+	check('container track counts reported', subState.container.audio === 3 && subState.container.subtitle === 1, JSON.stringify(subState.container));
+	check('info panel shows container counts', subState.infoHasContainer === true);
+	check('no page errors', subErrors.length === 0, subErrors[0] ?? '');
+
 	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
 	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
 } finally {

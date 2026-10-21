@@ -5,8 +5,9 @@
  * Run with: node --experimental-strip-types test/verify.ts
  */
 import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
-import { readMkvChapters } from '../src/mkv.ts';
+import { readMkvChapters, scanMatroska, blobByteSource } from '../src/mkv.ts';
 import { parseSubtitleText } from '../src/subtitles.ts';
+import { readFile } from 'node:fs/promises';
 
 let failures = 0;
 
@@ -112,6 +113,36 @@ console.log('\n== subtitle parsers ==');
 	check('ass cue count', assCues.length === 1, `got ${assCues.length}`);
 	check('ass text cleaned', assCues[0]?.text === 'Ass cue\nline two', JSON.stringify(assCues[0]?.text));
 	check('ass start', Math.abs((assCues[0]?.start ?? 0) - 1.5) < 0.001, String(assCues[0]?.start));
+}
+
+console.log('\n== embedded MKV subtitles ==');
+{
+	const blob = new Blob([await readFile('test/fixtures/multi-audio-subs.mkv')]);
+	const result = await scanMatroska(blobByteSource(blob), { durationHint: 8 });
+
+	check('file recognised as matroska', result.isMatroska === true);
+	check('five tracks found', result.tracks.length === 5, `got ${result.tracks.length}`);
+
+	const audioTracks = result.tracks.filter((track) => track.type === 'audio');
+	check('three audio tracks in the container', audioTracks.length === 3, `got ${audioTracks.length}`);
+	check(
+		'audio languages',
+		audioTracks.map((track) => track.language).join(',') === 'eng,jpn,spa',
+		audioTracks.map((track) => track.language).join(','),
+	);
+	check('audio channel counts', audioTracks.map((track) => track.channels).join(',') === '2,2,6', audioTracks.map((t) => t.channels).join(','));
+
+	const subtitleTracks = result.tracks.filter((track) => track.type === 'subtitle');
+	check('one subtitle track in the container', subtitleTracks.length === 1, `got ${subtitleTracks.length}`);
+	check('subtitle codec id', subtitleTracks[0]?.codecId === 'S_TEXT/UTF8', String(subtitleTracks[0]?.codecId));
+
+	check('subtitle cues extracted', result.subtitles.length === 1, `got ${result.subtitles.length}`);
+	const cues = result.subtitles[0]?.cues ?? [];
+	check('three cues', cues.length === 3, `got ${cues.length}`);
+	check('first cue text', cues[0]?.text.includes('First subtitle line'), JSON.stringify(cues[0]?.text));
+	check('first cue start', Math.abs((cues[0]?.start ?? 0) - 1) < 0.2, String(cues[0]?.start));
+	check('first cue end', Math.abs((cues[0]?.end ?? 0) - 3.5) < 0.2, String(cues[0]?.end));
+	check('cues are sorted', cues.every((cue, i) => i === 0 || cue.start >= cues[i - 1].start));
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) failed.\n`);
