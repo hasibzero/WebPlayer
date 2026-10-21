@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>MultiAudio Player — local video player with multiple audio tracks</title>
+		<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AC%3C/text%3E%3C/svg%3E" />
+	</head>
+	<body>
+		<div class="app">
+			<header class="topbar">
+				<div class="brand">
+					<span class="brand-mark"></span>
+					<div>
+						<h1>MultiAudio Player</h1>
+						<p>Local playback &middot; MKV, MP4, AVI, TS, WebM &hellip; &middot; multiple audio tracks &amp; mixing</p>
+					</div>
+				</div>
+				<div class="topbar-actions">
+					<button id="open-file" class="btn btn-primary" type="button">Open file</button>
+					<button id="open-url" class="btn" type="button">Open URL</button>
+					<button id="toggle-panel" class="btn" type="button" aria-pressed="false">Tracks</button>
+				</div>
+			</header>
+
+			<main class="layout">
+				<section class="stage-column">
+					<div class="stage" id="stage" tabindex="0">
+						<canvas id="video-canvas"></canvas>
+						<div id="subtitle-overlay" class="subtitle-overlay" aria-live="polite"></div>
+
+						<div class="stage-empty" id="stage-empty">
+							<div class="drop-illustration">
+								<svg viewBox="0 0 24 24" width="56" height="56" aria-hidden="true">
+									<path fill="currentColor" d="M12 3 3 8v8l9 5 9-5V8l-9-5Zm0 2.2 6.5 3.6L12 12.4 5.5 8.8 12 5.2ZM5 10.6l6 3.3v6.4l-6-3.3v-6.4Zm8 9.7v-6.4l6-3.3v6.4l-6 3.3Z" />
+								</svg>
+							</div>
+							<h2>Drop a video file here</h2>
+							<p>Everything stays on your machine — files are never uploaded.</p>
+							<button id="empty-open" class="btn btn-primary" type="button">Choose file</button>
+							<p class="hint">Supports multi-audio MKV: enable several audio tracks to mix them.</p>
+						</div>
+
+						<div class="stage-loading" id="stage-loading" hidden>
+							<div class="spinner"></div>
+							<p id="loading-text">Reading file…</p>
+							<div class="progress" id="progress" hidden>
+								<div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+								<span id="progress-text"></span>
+							</div>
+						</div>
+
+						<div class="stage-top" id="stage-top" hidden>
+							<div class="stage-title" id="stage-title"></div>
+							<div class="stage-badges" id="stage-badges"></div>
+						</div>
+
+						<div class="controls" id="controls" hidden>
+							<div class="seekbar" id="seekbar" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+								<div class="seekbar-track">
+									<div class="seekbar-buffer" id="seekbar-buffer"></div>
+									<div class="seekbar-fill" id="seekbar-fill"></div>
+									<div class="seekbar-handle" id="seekbar-handle"></div>
+								</div>
+								<div class="seekbar-tooltip" id="seekbar-tooltip" hidden></div>
+							</div>
+
+							<div class="control-row">
+								<button id="btn-play" class="icon-btn" type="button" title="Play / pause (Space)">
+									<svg class="icon-play" viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M8 5v14l11-7z" /></svg>
+									<svg class="icon-pause" viewBox="0 0 24 24" width="22" height="22" style="display: none"><path fill="currentColor" d="M6 5h4v14H6zm8 0h4v14h-4z" /></svg>
+								</button>
+
+								<div class="time-display"><span id="time-current">0:00</span><span class="time-sep">/</span><span id="time-duration">0:00</span></div>
+
+								<div class="volume-control">
+									<button id="btn-mute" class="icon-btn" type="button" title="Mute (M)">
+										<svg class="icon-volume" viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4Zm12.5 3a3.5 3.5 0 0 0-2-3.16v6.32A3.5 3.5 0 0 0 16.5 12Z" /></svg>
+										<svg class="icon-muted" viewBox="0 0 24 24" width="20" height="20" style="display: none"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4Zm15.5 3 2.3-2.3-1.4-1.4-2.3 2.3-2.3-2.3-1.4 1.4 2.3 2.3-2.3 2.3 1.4 1.4 2.3-2.3 2.3 2.3 1.4-1.4-2.3-2.3Z" /></svg>
+									</button>
+									<input id="volume-slider" class="slider" type="range" min="0" max="100" value="100" title="Volume" />
+								</div>
+
+								<label class="select-wrap" title="Playback speed">
+									<select id="rate-select" class="select" aria-label="Playback speed">
+										<option value="0.25">0.25x</option>
+										<option value="0.5">0.5x</option>
+										<option value="0.75">0.75x</option>
+										<option value="1" selected>1x</option>
+										<option value="1.25">1.25x</option>
+										<option value="1.5">1.5x</option>
+										<option value="1.75">1.75x</option>
+										<option value="2">2x</option>
+									</select>
+								</label>
+
+								<div class="spacer"></div>
+
+								<button id="btn-subs" class="icon-btn" type="button" title="Subtitles (C)">
+									<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 5h16v14H4V5Zm2 4v2h6V9H6Zm8 0v2h4V9h-4Zm-8 4v2h4v-2H6Zm6 0v2h6v-2h-6Z" /></svg>
+								</button>
+								<button id="btn-shot" class="icon-btn" type="button" title="Save screenshot (S)">
+									<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M9 4 7.5 6H4v14h16V6h-3.5L15 4H9Zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10Z" /></svg>
+								</button>
+								<button id="btn-pip" class="icon-btn" type="button" title="Picture in picture (P)">
+									<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M3 5h18v14H3V5Zm2 2v8h6v-2H7V7H5Zm6 8h8v-4h-8v4Z" /></svg>
+								</button>
+								<button id="btn-fullscreen" class="icon-btn" type="button" title="Fullscreen (F)">
+									<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M4 4h6v2H6v4H4V4Zm10 0h6v6h-2V6h-4V4ZM4 14h2v4h4v2H4v-6Zm14 0h2v6h-6v-2h4v-4Z" /></svg>
+								</button>
+							</div>
+						</div>
+					</div>
+
+					<div class="now-playing" id="now-playing" hidden>
+						<div class="np-icon"></div>
+						<button id="btn-prev" class="icon-btn" type="button" title="Previous file">
+							<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M7 6h2v12H7V6Zm3 6 8 6V6l-8 6Z" /></svg>
+						</button>
+						<button id="btn-next" class="icon-btn" type="button" title="Next file">
+							<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M15 6h2v12h-2V6Zm-2 6L5 6v12l8-6Z" /></svg>
+						</button>
+						<div class="np-body">
+							<div class="np-title" id="np-title"></div>
+							<div class="np-sub" id="np-sub"></div>
+						</div>
+						<button id="btn-close-media" class="icon-btn" type="button" title="Close media">&times;</button>
+					</div>
+				</section>
+
+				<aside class="panel" id="panel">
+					<div class="panel-head">
+						<h2>Tracks &amp; media</h2>
+						<button id="panel-close" class="icon-btn" type="button" title="Hide panel">&times;</button>
+					</div>
+
+					<div class="panel-scroll">
+						<section class="panel-section" id="section-audio">
+							<h3>Audio tracks <span class="hint-inline">enable several to mix</span></h3>
+							<div id="audio-track-list" class="track-list"></div>
+							<p class="empty-note" id="audio-empty" hidden>No audio tracks found.</p>
+						</section>
+
+						<section class="panel-section" id="section-video">
+							<h3>Video tracks</h3>
+							<div id="video-track-list" class="track-list"></div>
+						</section>
+
+						<section class="panel-section" id="section-subs">
+							<h3>Subtitles</h3>
+							<div class="row-actions">
+								<button id="btn-load-subs" class="btn btn-small" type="button">Load subtitle file</button>
+								<button id="btn-subs-off" class="btn btn-small" type="button">Off</button>
+							</div>
+							<div id="subtitle-list" class="track-list"></div>
+							<p class="empty-note" id="subs-empty">No subtitles loaded. Sidecar <code>.srt</code>, <code>.vtt</code> and <code>.ass</code> files are supported.</p>
+						</section>
+
+						<section class="panel-section" id="section-chapters">
+							<h3>Chapters</h3>
+							<div id="chapter-list" class="track-list"></div>
+							<p class="empty-note" id="chapters-empty">No chapters found in this file.</p>
+						</section>
+
+						<section class="panel-section" id="section-info">
+							<h3>Media info</h3>
+							<dl id="media-info" class="info-list"></dl>
+							<div class="row-actions" id="rescan-actions" hidden>
+								<button id="btn-rescan" class="btn btn-small" type="button">Re-download &amp; re-scan</button>
+							</div>
+							<p class="empty-note" id="rescan-hint" hidden>
+								Some servers deliver files in a way that hides extra tracks. Re-downloading the file
+								locally usually fixes this.
+							</p>
+						</section>
+					</div>
+				</aside>
+			</main>
+
+			<footer class="statusbar">
+				<span id="status-text">Ready — drop a file to begin.</span>
+				<span class="status-right" id="status-right"></span>
+			</footer>
+		</div>
+
+		<input id="file-input" type="file" accept="video/*,audio/*,.mkv,.mp4,.m4v,.webm,.avi,.mov,.ts,.m2ts,.mpg,.mpeg,.flv,.wmv,.ogv,.3gp,.mk3d" hidden multiple />
+		<input id="subtitle-input" type="file" accept=".srt,.vtt,.ass,.ssa,text/vtt" hidden multiple />
+
+		<div class="toast" id="toast" hidden></div>
+
+		<script type="module" src="/src/main.ts"></script>
+	</body>
+</html>
