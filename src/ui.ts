@@ -401,16 +401,17 @@ export class PlayerUI {
 		for (const state of states) {
 			const info = state.info;
 			const card = document.createElement('div');
-			card.className = 'track-card';
+			card.className = `track-card${state.enabled ? ' selected' : ''}`;
 
 			const head = document.createElement('div');
 			head.className = 'track-head';
 
-			const toggle = document.createElement('input');
-			toggle.type = 'checkbox';
-			toggle.checked = state.enabled;
-			toggle.addEventListener('change', () => {
-				void this.player.setAudioTrackEnabled(info.index, toggle.checked);
+			const radio = document.createElement('input');
+			radio.type = 'radio';
+			radio.name = 'audio-track';
+			radio.checked = state.enabled;
+			radio.addEventListener('change', () => {
+				if (radio.checked) void this.player.soloAudioTrack(info.index);
 			});
 
 			const meta = document.createElement('div');
@@ -450,28 +451,31 @@ export class PlayerUI {
 				.join(' · ');
 
 			meta.append(name, sub);
-			head.append(toggle, meta);
+			head.append(radio, meta);
 			card.append(head);
 
-			const volume = document.createElement('div');
-			volume.className = 'track-volume';
+			// Only the active track has a volume control.
+			if (state.enabled) {
+				const volume = document.createElement('div');
+				volume.className = 'track-volume';
 
-			const slider = document.createElement('input');
-			slider.type = 'range';
-			slider.className = 'slider';
-			slider.min = '0';
-			slider.max = '100';
-			slider.value = String(Math.round(state.volume * 100));
-			slider.addEventListener('input', () => {
-				this.player.setAudioTrackVolume(info.index, Number(slider.value) / 100);
-				value.textContent = `${slider.value}%`;
-			});
+				const slider = document.createElement('input');
+				slider.type = 'range';
+				slider.className = 'slider';
+				slider.min = '0';
+				slider.max = '100';
+				slider.value = String(Math.round(state.volume * 100));
+				slider.addEventListener('input', () => {
+					this.player.setAudioTrackVolume(info.index, Number(slider.value) / 100);
+					value.textContent = `${slider.value}%`;
+				});
 
-			const value = document.createElement('span');
-			value.textContent = `${Math.round(state.volume * 100)}%`;
+				const value = document.createElement('span');
+				value.textContent = `${Math.round(state.volume * 100)}%`;
 
-			volume.append(slider, value);
-			card.append(volume);
+				volume.append(slider, value);
+				card.append(volume);
+			}
 
 			this.audioTrackList.append(card);
 		}

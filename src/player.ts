@@ -1073,7 +1073,9 @@ export class MediaPlayer {
 	/** Enables exactly one audio track and disables the rest. */
 	async soloAudioTrack(index: number): Promise<void> {
 		for (const channel of this.audioChannels) {
-			await this.setAudioTrackEnabled(channel.info.index, channel.info.index === index);
+			const shouldBeEnabled = channel.info.index === index;
+			if (channel.enabled === shouldBeEnabled) continue;
+			await this.setAudioTrackEnabled(channel.info.index, shouldBeEnabled);
 		}
 	}
 

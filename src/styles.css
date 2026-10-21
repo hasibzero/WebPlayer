@@ -703,7 +703,8 @@ code {
 	gap: 9px;
 }
 
-.track-head input[type="checkbox"] {
+.track-head input[type="checkbox"],
+.track-head input[type="radio"] {
 	margin: 3px 0 0;
 	width: 15px;
 	height: 15px;
