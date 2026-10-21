@@ -18,6 +18,9 @@ Everything runs in the browser: files are read straight from disk and **never up
   sample rate. Enable several at once to **mix** them (original + commentary, stereo + 5.1, …),
   each with its own volume fader.
 - **Multiple video tracks** — pick between alternate angles/encodings of the same file.
+- **Embedded subtitles** — Matroska subtitle tracks (`S_TEXT/UTF8`, `S_TEXT/ASS`, `S_TEXT/WEBVTT`)
+  are read directly from the container, because the demuxer does not expose them. They show up in
+  the Subtitles section and can be toggled like any other track.
 - **Chapters** — MKV/Matroska chapters are parsed and shown in the side panel (click to jump).
 - **Subtitles** — load sidecar `.srt`, `.vtt` or `.ass/.ssa` files (drag them onto the window
   or use *Load subtitle file*); they are rendered on top of the video.
@@ -107,8 +110,11 @@ Either way seeking keeps working, all audio tracks are found, and the player tel
 did. The probe deliberately bypasses the HTTP cache (`cache: 'no-store'`) so that discarding its
 body cannot corrupt the entry used for the actual download.
 
-If a remote file still shows fewer tracks than expected, the **Media info** section offers
-*Re-download & re-scan*, which fetches the file completely and parses it again.
+If a remote file still shows fewer tracks than expected, the **Media info** section shows what the
+container itself declares (*In container*) next to what the player could read, and offers
+*Re-download & re-scan*, which fetches the file completely and parses it again. When the container
+lists more audio tracks than were detected, the player downloads the file a second time on its own
+and re-parses it, because that almost always means the server delivered the file incompletely.
 
 ## Keyboard shortcuts
 
