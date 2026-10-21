@@ -69,6 +69,7 @@ export class PlayerUI {
 	private readonly videoTrackList = el<HTMLDivElement>('video-track-list');
 	private readonly subtitleList = el<HTMLDivElement>('subtitle-list');
 	private readonly subsEmpty = el<HTMLParagraphElement>('subs-empty');
+	private readonly scanStatus = el<HTMLParagraphElement>('scan-status');
 	private readonly chapterList = el<HTMLDivElement>('chapter-list');
 	private readonly chaptersEmpty = el<HTMLParagraphElement>('chapters-empty');
 	private readonly mediaInfo = el<HTMLDListElement>('media-info');
@@ -166,6 +167,19 @@ export class PlayerUI {
 	private bindPlayerEvents(): void {
 		this.player.on('timeupdate', (time) => this.onTimeUpdate(time as number));
 		this.player.on('statechange', () => this.setPlaying(this.player.isPlaying));
+		this.player.on('scanprogress', (payload) => {
+			const { loaded, total } = payload as { loaded: number; total: number | null };
+			if (total) {
+				const percent = Math.min(100, (loaded / total) * 100);
+				this.scanStatus.hidden = false;
+				this.scanStatus.textContent = `Scanning the file for subtitles… ${percent.toFixed(0)}%`;
+			}
+		});
+
+		this.player.on('subtitles', () => {
+			this.scanStatus.hidden = true;
+		});
+
 		this.player.on('buffering', (value) => this.setLoading(Boolean(value), 'Buffering…'));
 		this.player.on('loading', (payload) => {
 			const info = payload as { name?: string; downloading?: boolean };

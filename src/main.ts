@@ -344,7 +344,6 @@ player.on('timeupdate', (time) => {
 
 player.on('subtitles', (payload) => {
 	const embedded = payload as SubtitleTrack[];
-	if (!embedded.length) return;
 
 	subtitleTracks = subtitleTracks.filter((track) => track.source !== 'embedded');
 	for (const track of embedded) {
@@ -356,6 +355,10 @@ player.on('subtitles', (payload) => {
 	if (activeSubtitleId === null) {
 		const first = subtitleTracks[0];
 		if (first) selectSubtitle(first.id);
+	} else {
+		// The cues keep arriving while the file is being scanned.
+		const active = subtitleTracks.find((track) => track.id === activeSubtitleId);
+		if (active) subtitleRenderer.setTrack(active.cues);
 	}
 });
 
