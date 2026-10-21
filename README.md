@@ -21,7 +21,9 @@ Everything runs in the browser: files are read straight from disk and **never up
 - **Multiple video tracks** — pick between alternate angles/encodings of the same file.
 - **Embedded subtitles** — Matroska subtitle tracks (`S_TEXT/UTF8`, `S_TEXT/ASS`, `S_TEXT/WEBVTT`)
   are read directly from the container, because the demuxer does not expose them. They show up in
-  the Subtitles section and can be toggled like any other track.
+  the Subtitles section and can be toggled like any other track. The reader **follows the playhead**
+  (reading ~90 s ahead) and jumps to the new position when you seek, so the cues for what you are
+  watching are available in a second or two instead of after scanning the whole file.
 - **Chapters** — MKV/Matroska chapters are parsed and shown in the side panel (click to jump).
 - **Subtitles** — load sidecar `.srt`, `.vtt` or `.ass/.ssa` files (drag them onto the window
   or use *Load subtitle file*); they are rendered on top of the video.

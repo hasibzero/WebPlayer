@@ -328,6 +328,7 @@ code {
 	padding: 10px 14px;
 	background: linear-gradient(180deg, rgba(0, 0, 0, 0.75), transparent);
 	pointer-events: none;
+	transition: opacity 0.25s ease;
 }
 
 .stage-title {
@@ -377,7 +378,8 @@ code {
 	transition: opacity 0.2s ease;
 }
 
-.controls.hidden-ui {
+.controls.hidden-ui,
+.stage-top.hidden-ui {
 	opacity: 0;
 	pointer-events: none;
 }

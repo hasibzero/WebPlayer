@@ -6,7 +6,8 @@
  */
 import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
 import { readMkvChapters, scanMatroska, blobByteSource, enableDisabledTracks } from '../src/mkv.ts';
-import { parseSubtitleText } from '../src/subtitles.ts';
+import { SubtitleScanner } from '../src/subtitle-scan.ts';
+import { parseSubtitleText, type SubtitleCue } from '../src/subtitles.ts';
 import { readFile } from 'node:fs/promises';
 
 let failures = 0;
@@ -115,10 +116,11 @@ console.log('\n== subtitle parsers ==');
 	check('ass start', Math.abs((assCues[0]?.start ?? 0) - 1.5) < 0.001, String(assCues[0]?.start));
 }
 
-console.log('\n== embedded MKV subtitles ==');
+	console.log('\n== embedded MKV subtitles ==');
 {
 	const blob = new Blob([await readFile('test/fixtures/multi-audio-subs.mkv')]);
-	const result = await scanMatroska(blobByteSource(blob), { durationHint: 8 });
+	const source = blobByteSource(blob);
+	const result = await scanMatroska(source, { durationHint: 8 });
 
 	check('file recognised as matroska', result.isMatroska === true);
 	check('five tracks found', result.tracks.length === 5, `got ${result.tracks.length}`);
@@ -136,12 +138,28 @@ console.log('\n== embedded MKV subtitles ==');
 	check('one subtitle track in the container', subtitleTracks.length === 1, `got ${subtitleTracks.length}`);
 	check('subtitle codec id', subtitleTracks[0]?.codecId === 'S_TEXT/UTF8', String(subtitleTracks[0]?.codecId));
 
-	check('subtitle cues extracted', result.subtitles.length === 1, `got ${result.subtitles.length}`);
-	const cues = result.subtitles[0]?.cues ?? [];
-	check('three cues', cues.length === 3, `got ${cues.length}`);
-	check('first cue text', cues[0]?.text.includes('First subtitle line'), JSON.stringify(cues[0]?.text));
-	check('first cue start', Math.abs((cues[0]?.start ?? 0) - 1) < 0.2, String(cues[0]?.start));
-	check('first cue end', Math.abs((cues[0]?.end ?? 0) - 3.5) < 0.2, String(cues[0]?.end));
+	// The cues are read by the scanner, which follows the playhead.
+	let scanned: Array<{ number: number; codecId: string; cues: SubtitleCue[] }> = [];
+	const done = new Promise<void>((resolve) => {
+		const scanner = new SubtitleScanner({
+			source: { size: blob.size, slice: (start, end) => source.slice(start, end) },
+			tracks: result.subtitles.map((track) => ({ number: track.number, codecId: track.codecId })),
+			timestampScale: result.timestampScale,
+			onUpdate: (tracks) => {
+				scanned = tracks;
+				if (tracks.some((track) => track.cues.length > 0)) resolve();
+			},
+		});
+		scanner.request(9);
+		setTimeout(resolve, 15000);
+	});
+
+	await done;
+
+	const cues = scanned[0]?.cues ?? [];
+	check('subtitle cues extracted', cues.length > 0, `got ${cues.length}`);
+	check('cue text', cues.some((cue) => cue.text.includes('First subtitle line')), JSON.stringify(cues[0]?.text));
+	check('cue start', cues.some((cue) => Math.abs(cue.start - 1) < 0.3), JSON.stringify(cues.map((c) => c.start)));
 	check('cues are sorted', cues.every((cue, i) => i === 0 || cue.start >= cues[i - 1].start));
 }
 

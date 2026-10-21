@@ -201,6 +201,7 @@ export class PlayerUI {
 			this.stageEmpty.hidden = true;
 			this.controls.hidden = false;
 			this.stageTop.hidden = false;
+			this.stageTop.classList.remove('hidden-ui');
 			this.nowPlaying.hidden = false;
 			this.setPlaying(this.player.isPlaying);
 			this.renderAudioTracks(this.player.audioChannelStates);
@@ -633,16 +634,21 @@ export class PlayerUI {
 
 	private showControls(): void {
 		this.controls.classList.remove('hidden-ui');
+		this.stageTop.classList.remove('hidden-ui');
 		clearTimeout(this.controlsTimeout);
 		this.controlsTimeout = window.setTimeout(() => {
 			if (this.player.isPlaying && !this.dragging) {
 				this.controls.classList.add('hidden-ui');
+				this.stageTop.classList.add('hidden-ui');
 			}
 		}, 2600);
 	}
 
 	private hideControls(): void {
-		if (this.player.isPlaying) this.controls.classList.add('hidden-ui');
+		if (this.player.isPlaying) {
+			this.controls.classList.add('hidden-ui');
+			this.stageTop.classList.add('hidden-ui');
+		}
 	}
 
 	private async toggleFullscreen(): Promise<void> {

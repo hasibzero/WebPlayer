@@ -277,6 +277,30 @@ try {
 	check('radio state follows the selection', selection.afterChecked[2] === true && selection.afterChecked[0] === false, JSON.stringify(selection.afterChecked));
 	check('only the active track has a volume control', selection.volumeSliders === 1, String(selection.volumeSliders));
 
+	console.log('\n== auto-hiding overlay ==');
+	const overlayState = await selectPage.evaluate(async () => {
+		const stage = document.getElementById('stage') as HTMLElement;
+		const top = document.getElementById('stage-top') as HTMLElement;
+		const controls = document.getElementById('controls') as HTMLElement;
+
+		// Simulate a mouse move over the stage.
+		stage.dispatchEvent(new PointerEvent('pointermove', { bubbles: true }));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const shown = !top.classList.contains('hidden-ui');
+
+		// Wait for the auto-hide timeout.
+		await new Promise((resolve) => setTimeout(resolve, 3000));
+		return {
+			shown,
+			topHidden: top.classList.contains('hidden-ui'),
+			controlsHidden: controls.classList.contains('hidden-ui'),
+		};
+	});
+	console.log('  overlay:', JSON.stringify(overlayState));
+	check('the top bar is shown while the pointer moves', overlayState.shown === true);
+	check('the top bar hides when the pointer stops', overlayState.topHidden === true);
+	check('the controls hide as well', overlayState.controlsHidden === true);
+
 	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
 	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
 } finally {
