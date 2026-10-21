@@ -75,6 +75,16 @@ option for direct video links.
 - Because the player page runs as an extension page, it **bypasses CORS**: links from servers
   that do not allow cross-origin requests can still be played, and cookies are sent along.
 
+### The hosted site and the extension work together
+
+A page on a normal web origin cannot fetch a remote video itself: the browser blocks it with
+**CORS** and, on HTTPS pages, with **mixed content** for `http://` links. The extension has host
+permissions, so it can load them.
+
+When the extension is installed, the player page hands the URL over to it automatically (via a
+message between the page and the extension's content script) and the extension opens the player
+in a tab. If the extension is not installed, the page says so and explains why.
+
 ### Installing it
 
 ```bash
