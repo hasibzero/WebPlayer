@@ -78,6 +78,8 @@ export class PlayerUI {
 	private readonly rescanActions = el<HTMLDivElement>('rescan-actions');
 	private readonly rescanHint = el<HTMLParagraphElement>('rescan-hint');
 	private readonly remoteHint = el<HTMLParagraphElement>('remote-hint');
+	private readonly extStatus = el<HTMLDivElement>('ext-status');
+	private readonly extStatusText = el<HTMLSpanElement>('ext-status-text');
 
 	private readonly statusText = el<HTMLSpanElement>('status-text');
 	private readonly statusRight = el<HTMLSpanElement>('status-right');
@@ -665,6 +667,15 @@ export class PlayerUI {
 	 */
 	setRemoteHint(visible: boolean): void {
 		this.remoteHint.hidden = !visible;
+	}
+
+	/** Shows whether the browser extension was detected on this page. */
+	setExtensionStatus(present: boolean): void {
+		this.extStatus.hidden = false;
+		this.extStatus.classList.toggle('ok', present);
+		this.extStatusText.textContent = present
+			? 'Browser extension detected — remote links work'
+			: 'Browser extension not detected — remote links need it';
 	}
 
 	/**

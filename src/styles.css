@@ -791,6 +791,31 @@ code {
 	text-align: right;
 }
 
+.ext-status {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+	padding: 7px 10px;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.04);
+	border: 1px solid var(--border);
+	font-size: 12px;
+	color: var(--text-dim);
+}
+
+.ext-dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--danger);
+	flex: 0 0 auto;
+}
+
+.ext-status.ok .ext-dot {
+	background: var(--ok);
+}
+
 .row-actions {
 	display: flex;
 	gap: 8px;

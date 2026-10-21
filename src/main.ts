@@ -261,7 +261,10 @@ let extensionPresent = false;
 window.addEventListener('message', (event) => {
 	const data = event.data;
 	if (!data || data.source !== 'multiaudio-player') return;
-	if (data.type === 'ready') extensionPresent = true;
+	if (data.type === 'ready') {
+		extensionPresent = true;
+		ui.setExtensionStatus(true);
+	}
 });
 
 /**
@@ -338,7 +341,8 @@ async function openUrl(url: string, name?: string): Promise<void> {
 	if (!loaded) {
 		ui.setLoading(false);
 		ui.toast(describeUrlError(), true, [
-			{ label: 'Get the browser extension', href: EXTENSION_PAGE },
+			{ label: 'Download the extension', href: EXTENSION_DOWNLOAD },
+			{ label: 'Installation help', href: `${EXTENSION_PAGE}#installation` },
 			{
 				label: 'Copy the link',
 				onClick: () => {
@@ -348,6 +352,7 @@ async function openUrl(url: string, name?: string): Promise<void> {
 		]);
 		ui.setStatus('Could not open the URL');
 		ui.setRemoteHint(true);
+		ui.setExtensionStatus(extensionPresent);
 		return;
 	}
 
@@ -372,22 +377,27 @@ function requestInitForUrl(): RequestInit | undefined {
 }
 
 const EXTENSION_PAGE = 'https://github.com/hasibzero/WebPlayer';
+const EXTENSION_DOWNLOAD =
+	'https://github.com/hasibzero/WebPlayer/raw/main/multiaudio-player-extension.zip';
 
 function describeUrlError(): string {
 	const message = lastErrorMessage;
 	lastErrorMessage = '';
 
+	if (!extensionPresent) {
+		return 'The browser extension is not installed (or not reloaded), so this page cannot open the '
+			+ 'link: browsers block third-party media on a normal web page. Install the extension below.';
+	}
+
 	// A page served over HTTPS cannot load an HTTP resource — the browser
 	// blocks it as mixed content before the request even goes out.
 	if (location.protocol === 'https:' && /^http:\/\//i.test(currentMediaUrl)) {
 		return 'This page is served over HTTPS, so the browser refuses to load an HTTP:// video '
-			+ '(mixed content). The browser extension can open it — make sure the extension is '
-			+ 'installed and up to date.';
+			+ '(mixed content). The browser extension can open it.';
 	}
 
 	if (/cors|cross-origin|failed to fetch|networkerror|load failed|mixed content/i.test(message)) {
-		return 'The server refused the request (CORS). The browser extension can open it anyway — '
-			+ 'make sure the extension is installed and up to date.';
+		return 'The server refused the request (CORS). The browser extension can open it anyway.';
 	}
 	return `Could not open that URL: ${message || 'unknown error'}`;
 }

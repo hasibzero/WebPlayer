@@ -144,6 +144,24 @@ invisible. The player reads the container header itself, rewrites those flags in
 keeps its exact length, so no offset shifts) and feeds the corrected header to the demuxer. The
 tracks then show up like any others, and the player logs how many it had to enable.
 
+## Installation
+
+The player itself is the web page — open it and drop a file in. For third-party video links you
+also want the **browser extension**, which is the only thing allowed to fetch a video from another
+site (browsers block that for normal web pages with CORS and mixed-content rules).
+
+1. Download `multiaudio-player-extension.zip` from the
+   [repository root](https://github.com/hasibzero/WebPlayer) (or run `npm run pack:extension`).
+2. Unzip it somewhere permanent.
+3. Open `edge://extensions` (Edge) or `chrome://extensions` (Chrome) and turn on
+   **Developer mode**.
+4. Click **Load unpacked** and pick the folder you unzipped.
+5. **Reload the extension** after every update, and **reload the web page** afterwards so the
+   content script is injected again.
+
+The player page shows whether the extension was detected (*Media info → Browser extension
+detected*), so you can tell at a glance why a remote link does not open.
+
 ## Keyboard shortcuts
 | Key | Action | Key | Action |
 | --- | --- | --- | --- |
