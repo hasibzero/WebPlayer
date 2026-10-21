@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<title>MultiAudio Player</title>
+		<style>
+			:root {
+				color-scheme: dark;
+			}
+			body {
+				margin: 0;
+				width: 320px;
+				padding: 14px;
+				background: #12151d;
+				color: #e7ecf3;
+				font: 13px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+			}
+			.head {
+				display: flex;
+				align-items: center;
+				gap: 9px;
+				margin-bottom: 12px;
+			}
+			.dot {
+				width: 26px;
+				height: 26px;
+				border-radius: 8px;
+				background: linear-gradient(135deg, #4f8cff, #9d6bff 60%, #35d0ba);
+			}
+			h1 {
+				margin: 0;
+				font-size: 13px;
+				font-weight: 650;
+			}
+			p {
+				margin: 0;
+				font-size: 11px;
+				color: #7c8698;
+			}
+			label {
+				display: block;
+				font-size: 11px;
+				color: #9aa4b5;
+				margin-bottom: 5px;
+			}
+			input {
+				width: 100%;
+				box-sizing: border-box;
+				padding: 8px 10px;
+				border-radius: 8px;
+				border: 1px solid #2b3240;
+				background: #0e1117;
+				color: #e7ecf3;
+				font: inherit;
+				outline: none;
+			}
+			input:focus {
+				border-color: #4f8cff;
+			}
+			button {
+				width: 100%;
+				margin-top: 10px;
+				padding: 9px 12px;
+				border: 0;
+				border-radius: 8px;
+				background: #4f8cff;
+				color: #fff;
+				font: inherit;
+				font-weight: 600;
+				cursor: pointer;
+			}
+			button:hover {
+				background: #6ea1ff;
+			}
+			button.ghost {
+				background: #1b202b;
+				color: #cfd6e2;
+				border: 1px solid #2b3240;
+				font-weight: 500;
+			}
+			button.ghost:hover {
+				background: #232a37;
+			}
+			.hint {
+				margin-top: 12px;
+				font-size: 10.5px;
+				color: #6b7688;
+				border-top: 1px solid rgba(255, 255, 255, 0.07);
+				padding-top: 10px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="head">
+			<div class="dot"></div>
+			<div>
+				<h1>MultiAudio Player</h1>
+				<p>Open a direct video link</p>
+			</div>
+		</div>
+
+		<label for="url">Video URL</label>
+		<input id="url" type="url" placeholder="https://example.com/movie.mkv" spellcheck="false" />
+		<button id="open" type="button">Open in player</button>
+		<button id="pick" class="ghost" type="button">Pick a local file</button>
+
+		<div class="hint">Tip: left-click any direct video link on a page to get the same option.</div>
+
+		<script src="popup.js"></script>
+	</body>
+</html>
