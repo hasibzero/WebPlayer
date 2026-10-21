@@ -1,5 +1,3 @@
-import './styles.css';
-
 import { MediaPlayer } from './player.ts';
 import { PlayerUI } from './ui.ts';
 import { readMkvChapters } from './mkv.ts';

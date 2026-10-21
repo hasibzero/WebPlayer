@@ -372,7 +372,7 @@ try {
 			mode: player.mode,
 			audioCount: player.audioChannelStates.length,
 			langs: player.audioChannelStates.map((state: any) => state.info.language),
-			domCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			domCards: document.querySelectorAll('#menu-audio .menu-item').length,
 			playing: player.isPlaying,
 			time: player.getMediaTime(),
 		};
@@ -394,7 +394,7 @@ try {
 			visible,
 			mode: player.mode,
 			audioCount: player.audioChannelStates.length,
-			domCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			domCards: document.querySelectorAll('#menu-audio .menu-item').length,
 		};
 	});
 	console.log('  re-scan:', JSON.stringify(rescanState));
