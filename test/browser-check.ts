@@ -214,6 +214,30 @@ try {
 	check('info panel shows container counts', subState.infoHasContainer === true);
 	check('no page errors', subErrors.length === 0, subErrors[0] ?? '');
 
+	console.log('\n== tracks flagged as disabled in the file ==');
+	const disabledPage = await browser.newPage();
+	await disabledPage.setViewport({ width: 1400, height: 900 });
+	await disabledPage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+	const disabledInput = await disabledPage.$('#file-input');
+	await disabledInput!.uploadFile(resolve('test/fixtures/disabled-tracks.mkv'));
+	await disabledPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+	await new Promise((r) => setTimeout(r, 800));
+
+	const disabledState = await disabledPage.evaluate(() => {
+		const player = (window as any).__player;
+		return {
+			enabledTracks: player.enabledTrackCount,
+			engineTracks: player.audioChannelStates.length,
+			domCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			langs: player.audioChannelStates.map((state: any) => state.info.language),
+		};
+	});
+	console.log('  disabled tracks:', JSON.stringify(disabledState));
+	check('disabled track was detected and enabled', disabledState.enabledTracks === 1, String(disabledState.enabledTracks));
+	check('all three audio tracks are listed', disabledState.engineTracks === 3, String(disabledState.engineTracks));
+	check('panel shows all three audio tracks', disabledState.domCards === 3, String(disabledState.domCards));
+	check('all languages are shown', disabledState.langs.join(',') === 'eng,jpn,spa', disabledState.langs.join(','));
+
 	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
 	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
 } finally {

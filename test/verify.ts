@@ -5,7 +5,7 @@
  * Run with: node --experimental-strip-types test/verify.ts
  */
 import { ALL_FORMATS, FilePathSource, Input } from 'mediabunny';
-import { readMkvChapters, scanMatroska, blobByteSource } from '../src/mkv.ts';
+import { readMkvChapters, scanMatroska, blobByteSource, enableDisabledTracks } from '../src/mkv.ts';
 import { parseSubtitleText } from '../src/subtitles.ts';
 import { readFile } from 'node:fs/promises';
 
@@ -143,6 +143,28 @@ console.log('\n== embedded MKV subtitles ==');
 	check('first cue start', Math.abs((cues[0]?.start ?? 0) - 1) < 0.2, String(cues[0]?.start));
 	check('first cue end', Math.abs((cues[0]?.end ?? 0) - 3.5) < 0.2, String(cues[0]?.end));
 	check('cues are sorted', cues.every((cue, i) => i === 0 || cue.start >= cues[i - 1].start));
+}
+
+console.log('\n== tracks flagged as disabled ==');
+{
+	const header = new Uint8Array(await readFile('test/fixtures/disabled-tracks.mkv'));
+	const patch = enableDisabledTracks(header);
+	check('one disabled track found', patch.enabledTracks === 1, String(patch.enabledTracks));
+	check('the affected track number is reported', patch.enabledTrackNumbers.join(',') === '2', patch.enabledTrackNumbers.join(','));
+
+	// The patched bytes must be the same length, so no offsets shift.
+	check('patched header keeps its length', patch.bytes.length === header.length);
+	check('only the flag byte changed', (() => {
+		let differences = 0;
+		for (let i = 0; i < header.length; i++) if (header[i] !== patch.bytes[i]) differences++;
+		return differences === 1;
+	})());
+
+	// Without patching, the demuxer hides the disabled track.
+	const input = new Input({ source: new FilePathSource('test/fixtures/disabled-tracks.mkv'), formats: ALL_FORMATS });
+	const hidden = (await input.getAudioTracks()).length;
+	input.dispose();
+	check('demuxer hides the disabled track', hidden === 2, String(hidden));
 }
 
 console.log(failures === 0 ? '\nAll checks passed.\n' : `\n${failures} check(s) failed.\n`);
