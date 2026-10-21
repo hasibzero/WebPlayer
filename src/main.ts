@@ -51,7 +51,7 @@ function selectSubtitle(id: string | null): void {
 		activeSubtitleId = id;
 		subtitleRenderer.setTrack(track.cues);
 	}
-	ui.renderSubtitles(subtitleTracks, activeSubtitleId);
+	ui.setSubtitleTracks(subtitleTracks, activeSubtitleId);
 }
 
 function toggleSubtitles(): void {
@@ -88,7 +88,7 @@ async function addSubtitleFiles(files: File[]): Promise<void> {
 			console.warn(error);
 		}
 	}
-	ui.renderSubtitles(subtitleTracks, activeSubtitleId);
+	ui.setSubtitleTracks(subtitleTracks, activeSubtitleId);
 	if (activeSubtitleId === null && subtitleTracks.length) {
 		selectSubtitle(subtitleTracks[0].id);
 	}
@@ -484,7 +484,7 @@ player.on('subtitles', (payload) => {
 		subtitleTracks.push({ ...track, source: 'embedded' });
 	}
 
-	ui.renderSubtitles(subtitleTracks, activeSubtitleId);
+	ui.setSubtitleTracks(subtitleTracks, activeSubtitleId);
 
 	if (activeSubtitleId === null) {
 		const first = subtitleTracks[0];

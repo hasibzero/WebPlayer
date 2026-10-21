@@ -4,5 +4,6 @@ extension/dist/
 test/fixtures/
 test/screenshots/
 *.log
+*.rar
 .DS_Store
 .vite/

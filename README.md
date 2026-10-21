@@ -31,6 +31,9 @@ Everything runs in the browser: files are read straight from disk and **never up
   resolution or any smaller standard step (480p, 360p, …). The frames are drawn smaller, which
   takes the load off the compositor on high-resolution files or weak machines. The top bar shows
   the effective resolution and flags it as *scaled* when it differs from the source.
+- **Track controls on the player** — the transport bar carries *Audio*, *Video*, *Subtitles* and
+  *Quality* menus, each showing the available options with the active one ticked. The same
+  information is mirrored in the side inspector.
 - **Player extras** — seek bar, playback speed (0.25×–4×), volume/mute, picture-in-picture,
   fullscreen, screenshots, playlist (next/previous), keyboard shortcuts, media info panel.- **Extra decoders on demand** — AC-3/E-AC-3, DTS and Apple ProRes are supported through
   optional WASM decoders that are only downloaded when a file actually needs them.

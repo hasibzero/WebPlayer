@@ -71,8 +71,8 @@ try {
 			audioDecodable: audioStates.map((state: any) => state.info.decodable),
 			playing: player.isPlaying,
 			time: player.getMediaTime(),
-			uiAudioCards: document.querySelectorAll('#audio-track-list .track-card').length,
-			uiVideoCards: document.querySelectorAll('#video-track-list .track-card').length,
+			uiAudioCards: document.querySelectorAll('#menu-audio .menu-item').length,
+			uiVideoCards: document.querySelectorAll('#menu-video .menu-item').length,
 		};
 	});
 
@@ -162,13 +162,13 @@ try {
 	await chapterInput!.uploadFile(resolve('test/fixtures/chapters.mkv'));
 	await chapterPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
 	await chapterPage.waitForFunction(
-		() => document.querySelectorAll('#chapter-list .chapter-item').length > 0,
+		() => document.querySelectorAll('#chapter-list .chapter-row').length > 0,
 		{ timeout: 20000 },
 	);
 	const chapterInfo = await chapterPage.evaluate(() =>
-		Array.from(document.querySelectorAll('#chapter-list .chapter-item')).map((item) => ({
-			time: item.querySelector('.ch-time')?.textContent,
-			title: item.querySelector('.ch-title')?.textContent,
+		Array.from(document.querySelectorAll('#chapter-list .chapter-row')).map((item) => ({
+			time: item.querySelector('.chapter-time')?.textContent,
+			title: item.querySelector('.chapter-title')?.textContent,
 		})),
 	);
 	console.log('  chapters:', JSON.stringify(chapterInfo));
@@ -186,7 +186,7 @@ try {
 	await subInput!.uploadFile(resolve('test/fixtures/multi-audio-subs.mkv'));
 	await subPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
 	await subPage.waitForFunction(
-		() => document.querySelectorAll('#subtitle-list .track-card').length > 0,
+		() => document.querySelectorAll('#menu-subs .menu-item').length > 0,
 		{ timeout: 30000 },
 	);
 
@@ -198,9 +198,9 @@ try {
 		return {
 			embedded: player.embeddedSubtitles.length,
 			cues: player.embeddedSubtitles[0]?.cues.length ?? 0,
-			cards: document.querySelectorAll('#subtitle-list .track-card').length,
+			cards: document.querySelectorAll('#menu-subs .menu-item').length,
 			overlay: document.getElementById('subtitle-overlay')?.textContent?.trim() ?? '',
-			audioCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			audioCards: document.querySelectorAll('#menu-audio .menu-item').length,
 			container: player.containerTrackCounts,
 			infoHasContainer: info.includes('In container'),
 		};
@@ -208,7 +208,7 @@ try {
 	console.log('  subtitle state:', JSON.stringify(subState));
 	check('embedded subtitle track detected', subState.embedded === 1, String(subState.embedded));
 	check('embedded cues extracted', subState.cues === 3, String(subState.cues));
-	check('subtitle listed in the panel', subState.cards === 1, String(subState.cards));
+	check('subtitle listed in the menu', subState.cards >= 2, String(subState.cards));
 	check('cue rendered on the video', subState.overlay.includes('First subtitle line'), JSON.stringify(subState.overlay));
 	check('audio tracks still listed', subState.audioCards === 3, String(subState.audioCards));
 	check('container track counts reported', subState.container.audio === 3 && subState.container.subtitle === 1, JSON.stringify(subState.container));
@@ -229,7 +229,7 @@ try {
 		return {
 			enabledTracks: player.enabledTrackCount,
 			engineTracks: player.audioChannelStates.length,
-			domCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			domCards: document.querySelectorAll('#menu-audio .menu-item').length,
 			langs: player.audioChannelStates.map((state: any) => state.info.language),
 		};
 	});
@@ -250,33 +250,38 @@ try {
 
 	const selection = await selectPage.evaluate(async () => {
 		const player = (window as any).__player;
-		const radios = () => document.querySelectorAll<HTMLInputElement>('#audio-track-list input[type="radio"]');
+		const items = () => document.querySelectorAll<HTMLElement>('#menu-audio .menu-item');
 		const before = {
-			radios: radios().length,
-			checked: Array.from(radios()).map((radio) => radio.checked),
+			items: items().length,
+			checked: Array.from(items()).map((item) => item.getAttribute('aria-checked') === 'true'),
 			enabled: player.audioChannelStates.map((state: any) => state.enabled),
 		};
 
-		// Pick the third track through the UI.
-		const third = radios()[2];
-		third.click();
-		await new Promise((resolve) => setTimeout(resolve, 800));
+		// Open the audio menu on the player and pick the third track.
+		(document.getElementById('btn-audio-menu') as HTMLButtonElement).click();
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const menuOpen = !(document.getElementById('menu-audio') as HTMLElement).hidden;
+		items()[2].click();
+		await new Promise((resolve) => setTimeout(resolve, 900));
 
 		return {
 			before,
+			menuOpen,
 			afterEnabled: player.audioChannelStates.map((state: any) => state.enabled),
-			afterChecked: Array.from(radios()).map((radio) => radio.checked),
-			volumeSliders: document.querySelectorAll('#audio-track-list .track-volume').length,
-			selectedCards: document.querySelectorAll('#audio-track-list .track-card.selected').length,
+			afterChecked: Array.from(items()).map((item) => item.getAttribute('aria-checked') === 'true'),
+			menuClosed: (document.getElementById('menu-audio') as HTMLElement).hidden,
+			label: document.getElementById('audio-menu-label')?.textContent,
 		};
 	});
 	console.log('  selection:', JSON.stringify(selection));
-	check('radio buttons are used', selection.before.radios === 3, String(selection.before.radios));
+	check('the audio menu lists every track', selection.before.items === 3, String(selection.before.items));
+	check('the menu opens on the player', selection.menuOpen === true);
 	check('one track is selected by default', selection.before.checked.filter(Boolean).length === 1, JSON.stringify(selection.before.checked));
 	check('picking a track deselects the others', selection.afterEnabled.filter(Boolean).length === 1, JSON.stringify(selection.afterEnabled));
 	check('the picked track is the active one', selection.afterEnabled[2] === true, JSON.stringify(selection.afterEnabled));
-	check('radio state follows the selection', selection.afterChecked[2] === true && selection.afterChecked[0] === false, JSON.stringify(selection.afterChecked));
-	check('only the active track has a volume control', selection.volumeSliders === 1, String(selection.volumeSliders));
+	check('the checkmark follows the selection', selection.afterChecked[2] === true && selection.afterChecked[0] === false, JSON.stringify(selection.afterChecked));
+	check('the menu closes after picking', selection.menuClosed === true);
+	check('the button shows the active track', (selection.label ?? '').length > 0, String(selection.label));
 
 	console.log('\n== auto-hiding overlay ==');
 	const overlayState = await selectPage.evaluate(async () => {
@@ -312,23 +317,20 @@ try {
 	await new Promise((r) => setTimeout(r, 800));
 
 	const qualityState = await qualityPage.evaluate(async () => {
-		const select = document.getElementById('quality-select') as HTMLSelectElement;
-		const options = Array.from(select.options).map((option) => option.textContent ?? '');
+		const items = () => document.querySelectorAll<HTMLElement>('#menu-quality .menu-item');
+		const options = Array.from(items()).map((item) => item.querySelector('.menu-label')?.textContent ?? '');
 		const before = (window as any).__player.effectiveResolution;
 
-		// Pick the first scaled option.
-		const target = Array.from(select.options).find(
-			(option) => option.value !== 'source',
-		);
-		if (target) {
-			select.value = target.value;
-			select.dispatchEvent(new Event('change'));
-			await new Promise((resolve) => setTimeout(resolve, 1500));
-		}
+		// Open the quality menu on the player and pick the first scaled option.
+		(document.getElementById('btn-quality-menu') as HTMLButtonElement).click();
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const target = Array.from(items()).find((item) => item.getAttribute('aria-checked') !== 'true');
+		target?.click();
+		await new Promise((resolve) => setTimeout(resolve, 1500));
 
 		const after = (window as any).__player.effectiveResolution;
 		const canvas = document.getElementById('video-canvas') as HTMLCanvasElement;
-		const note = document.getElementById('quality-note') as HTMLParagraphElement;
+		const label = document.getElementById('quality-menu-label')?.textContent;
 
 		// Playback must continue across the change.
 		await (window as any).__player.play();
@@ -338,11 +340,10 @@ try {
 
 		return {
 			options,
+			label,
 			before: { width: before.width, height: before.height, scaled: before.scaled },
 			after: { width: after.width, height: after.height, scaled: after.scaled },
 			canvasWidth: canvas.width,
-			noteVisible: !note.hidden,
-			note: note.textContent,
 			stillPlaying: timeAfter > timeBefore,
 		};
 	});
@@ -351,7 +352,7 @@ try {
 	check('the source resolution is offered', qualityState.options[0]?.includes('Source') === true, qualityState.options[0]);
 	check('selecting a quality changes the render size', qualityState.after.width < qualityState.before.width, JSON.stringify(qualityState));
 	check('the canvas follows the quality', qualityState.canvasWidth === qualityState.after.width, `${qualityState.canvasWidth} vs ${qualityState.after.width}`);
-	check('the scaling is explained', qualityState.noteVisible === true, qualityState.note);
+	check('the button shows the current quality', (qualityState.label ?? '').length > 0, String(qualityState.label));
 	check('playback continues after the change', qualityState.stillPlaying === true);
 
 	console.log('\n== direct remote file (host allows CORS) ==');
@@ -385,7 +386,7 @@ try {
 			return {
 				audioTracks: player.audioChannelStates.length,
 				playing: player.isPlaying,
-				domCards: document.querySelectorAll('#audio-track-list .track-card').length,
+				domCards: document.querySelectorAll('#menu-audio .menu-item').length,
 			};
 		});
 		console.log('  direct remote:', JSON.stringify(remoteState));
