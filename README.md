@@ -15,9 +15,9 @@ Everything runs in the browser: files are read straight from disk and **never up
   demuxed in pure JavaScript, so Matroska files that browsers refuse to play (e.g. H.264/AAC
   inside MKV) work just fine.
 - **Multi-audio** — every audio track is listed with its language, codec, channel layout and
-  sample rate. Enable several at once to **mix** them (original + commentary, stereo + 5.1, …),
-  each with its own volume fader. Tracks that the file marks as disabled (`FlagEnabled = 0`, which
-  many dual-audio releases do) are enabled automatically so they show up as well.
+  sample rate. Pick the one you want to hear with a single click; the selected track gets a volume
+  fader of its own. Tracks that the file marks as disabled (`FlagEnabled = 0`, which many
+  dual-audio releases do) are enabled automatically so they show up as well.
 - **Multiple video tracks** — pick between alternate angles/encodings of the same file.
 - **Embedded subtitles** — Matroska subtitle tracks (`S_TEXT/UTF8`, `S_TEXT/ASS`, `S_TEXT/WEBVTT`)
   are read directly from the container, because the demuxer does not expose them. They show up in
@@ -26,8 +26,7 @@ Everything runs in the browser: files are read straight from disk and **never up
 - **Subtitles** — load sidecar `.srt`, `.vtt` or `.ass/.ssa` files (drag them onto the window
   or use *Load subtitle file*); they are rendered on top of the video.
 - **Player extras** — seek bar, playback speed (0.25×–4×), volume/mute, picture-in-picture,
-  fullscreen, screenshots, playlist (next/previous), keyboard shortcuts, media info panel.
-- **Extra decoders on demand** — AC-3/E-AC-3, DTS and Apple ProRes are supported through
+  fullscreen, screenshots, playlist (next/previous), keyboard shortcuts, media info panel.- **Extra decoders on demand** — AC-3/E-AC-3, DTS and Apple ProRes are supported through
   optional WASM decoders that are only downloaded when a file actually needs them.
 
 ## Requirements

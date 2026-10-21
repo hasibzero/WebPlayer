@@ -238,6 +238,45 @@ try {
 	check('panel shows all three audio tracks', disabledState.domCards === 3, String(disabledState.domCards));
 	check('all languages are shown', disabledState.langs.join(',') === 'eng,jpn,spa', disabledState.langs.join(','));
 
+	console.log('\n== audio track selection ==');
+	const selectPage = await browser.newPage();
+	await selectPage.setViewport({ width: 1400, height: 900 });
+	await selectPage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+	const selectInput = await selectPage.$('#file-input');
+	await selectInput!.uploadFile(resolve('test/fixtures/multi-audio.mkv'));
+	await selectPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+	await new Promise((r) => setTimeout(r, 800));
+
+	const selection = await selectPage.evaluate(async () => {
+		const player = (window as any).__player;
+		const radios = () => document.querySelectorAll<HTMLInputElement>('#audio-track-list input[type="radio"]');
+		const before = {
+			radios: radios().length,
+			checked: Array.from(radios()).map((radio) => radio.checked),
+			enabled: player.audioChannelStates.map((state: any) => state.enabled),
+		};
+
+		// Pick the third track through the UI.
+		const third = radios()[2];
+		third.click();
+		await new Promise((resolve) => setTimeout(resolve, 800));
+
+		return {
+			before,
+			afterEnabled: player.audioChannelStates.map((state: any) => state.enabled),
+			afterChecked: Array.from(radios()).map((radio) => radio.checked),
+			volumeSliders: document.querySelectorAll('#audio-track-list .track-volume').length,
+			selectedCards: document.querySelectorAll('#audio-track-list .track-card.selected').length,
+		};
+	});
+	console.log('  selection:', JSON.stringify(selection));
+	check('radio buttons are used', selection.before.radios === 3, String(selection.before.radios));
+	check('one track is selected by default', selection.before.checked.filter(Boolean).length === 1, JSON.stringify(selection.before.checked));
+	check('picking a track deselects the others', selection.afterEnabled.filter(Boolean).length === 1, JSON.stringify(selection.afterEnabled));
+	check('the picked track is the active one', selection.afterEnabled[2] === true, JSON.stringify(selection.afterEnabled));
+	check('radio state follows the selection', selection.afterChecked[2] === true && selection.afterChecked[0] === false, JSON.stringify(selection.afterChecked));
+	check('only the active track has a volume control', selection.volumeSliders === 1, String(selection.volumeSliders));
+
 	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
 	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
 } finally {
