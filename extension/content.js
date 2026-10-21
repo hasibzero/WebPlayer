@@ -216,4 +216,26 @@
 
 	window.addEventListener('scroll', closePopup, true);
 	window.addEventListener('resize', closePopup);
+
+	// The player page can ask the extension to open a URL for it. This is how the
+	// hosted site gets around the browser's CORS and mixed-content rules.
+	window.addEventListener('message', (event) => {
+		const data = event.data;
+		if (!data || data.source !== 'multiaudio-player') return;
+
+		if (data.type === 'ping') {
+			window.postMessage({ source: 'multiaudio-player', type: 'pong' }, '*');
+			return;
+		}
+
+		if (data.type === 'open-in-player' && data.url) {
+			chrome.runtime.sendMessage(
+				{ type: 'open-in-player', url: data.url, name: data.name },
+				() => void chrome.runtime.lastError,
+			);
+		}
+	});
+
+	// Announce that the extension is available on this page.
+	window.postMessage({ source: 'multiaudio-player', type: 'ready' }, '*');
 })();

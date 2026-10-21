@@ -13,6 +13,7 @@ const player = new MediaPlayer(canvas);
 const subtitleRenderer = new SubtitleRenderer(subtitleOverlay);
 
 let lastErrorMessage = '';
+let currentMediaUrl = '';
 player.on('error', (error) => {
 	lastErrorMessage = error instanceof Error ? error.message : String(error);
 });
@@ -254,7 +255,79 @@ function stepPlaylist(direction: number): void {
 	void openFile(playlist[playlistIndex]);
 }
 
+/** Set by the extension's content script as soon as it is available. */
+let extensionPresent = false;
+
+window.addEventListener('message', (event) => {
+	const data = event.data;
+	if (!data || data.source !== 'multiaudio-player') return;
+	if (data.type === 'ready') extensionPresent = true;
+});
+
+/**
+ * Asks the browser extension to open the URL for us.
+ *
+ * The hosted site runs on a normal web origin, so it is bound by the browser's
+ * CORS and mixed-content rules. The extension has host permissions and can load
+ * any media URL, so when it is installed we hand the URL over to it.
+ *
+ * @returns Whether the extension took over.
+ */
+async function openViaExtension(url: string, name?: string): Promise<boolean> {
+	// If the extension already announced itself, we can skip the handshake.
+	if (extensionPresent) {
+		window.postMessage({ source: 'multiaudio-player', type: 'open-in-player', url, name }, '*');
+		return true;
+	}
+
+	const ask = (): Promise<boolean> =>
+		new Promise((resolve) => {
+			let settled = false;
+			const finish = (result: boolean) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				window.removeEventListener('message', onMessage);
+				resolve(result);
+			};
+
+			const onMessage = (event: MessageEvent) => {
+				const data = event.data;
+				if (!data || data.source !== 'multiaudio-player') return;
+				if (data.type !== 'pong') return;
+				finish(true);
+				window.postMessage(
+					{ source: 'multiaudio-player', type: 'open-in-player', url, name },
+					'*',
+				);
+			};
+
+			const timer = window.setTimeout(() => finish(false), 500);
+			window.addEventListener('message', onMessage);
+			window.postMessage({ source: 'multiaudio-player', type: 'ping' }, '*');
+		});
+
+	// The content script may not be injected yet when the page loads, so try a
+	// few times before giving up.
+	for (let attempt = 0; attempt < 4; attempt++) {
+		if (await ask()) return true;
+		await new Promise((resolve) => setTimeout(resolve, 400));
+	}
+	return false;
+}
+
 async function openUrl(url: string, name?: string): Promise<void> {
+	currentMediaUrl = url;
+
+	// The extension can load URLs that the page itself is not allowed to.
+	// (The extension's own player page is exempt — it can already load them.)
+	const isExtensionPage = location.protocol === 'chrome-extension:';
+	if (!isExtensionPage && (await openViaExtension(url, name))) {
+		ui.toast('Opening in the MultiAudio Player extension…');
+		ui.setStatus('Handed over to the extension');
+		return;
+	}
+
 	ui.setLoading(true, 'Opening URL…');
 	ui.setStatus(`Opening ${url}…`);
 
@@ -292,9 +365,18 @@ function requestInitForUrl(): RequestInit | undefined {
 function describeUrlError(): string {
 	const message = lastErrorMessage;
 	lastErrorMessage = '';
-	return /cors|cross-origin|failed to fetch|networkerror|load failed/i.test(message)
-		? 'The server refused the request (CORS). Install the browser extension to bypass this restriction.'
-		: `Could not open that URL: ${message || 'unknown error'}`;
+
+	// A page served over HTTPS cannot load an HTTP resource — the browser
+	// blocks it as mixed content before the request even goes out.
+	if (location.protocol === 'https:' && /^http:\/\//i.test(currentMediaUrl)) {
+		return 'This page is served over HTTPS, so the browser refuses to load an HTTP:// video '
+			+ '(mixed content). Use the browser extension, or an HTTPS:// link.';
+	}
+
+	if (/cors|cross-origin|failed to fetch|networkerror|load failed|mixed content/i.test(message)) {
+		return 'The server refused the request (CORS). Install the browser extension to bypass this restriction.';
+	}
+	return `Could not open that URL: ${message || 'unknown error'}`;
 }
 
 function fileNameFromUrl(url: string): string {
