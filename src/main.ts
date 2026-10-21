@@ -193,7 +193,14 @@ function refreshMediaDetails(): void {
 	const audioCount = player.audioChannelStates.length;
 
 	const badges: string[] = [];
-	if (video) badges.push(`${video.displayWidth}×${video.displayHeight}`);
+	const resolution = player.effectiveResolution;
+	if (resolution.width) {
+		badges.push(
+			resolution.scaled
+				? `${resolution.width}×${resolution.height} (scaled)`
+				: `${resolution.sourceWidth}×${resolution.sourceHeight}`,
+		);
+	}
 	badges.push(`${audioCount} audio track${audioCount === 1 ? '' : 's'}`);
 	badges.push(formatTime(player.duration));
 	ui.setBadges(badges);
@@ -205,6 +212,9 @@ function refreshMediaDetails(): void {
 		['Video', video ? `${codecName(video.codec)} · ${video.displayWidth}×${video.displayHeight}` : '—'],
 		['Audio tracks', String(audioCount)],
 	];
+	if (resolution.scaled) {
+		info.push(['Quality', `${resolution.width}×${resolution.height} (scaled)`]);
+	}
 	if (player.size) info.push(['Size', formatBytes(player.size)]);
 
 	const container = player.containerTrackCounts;

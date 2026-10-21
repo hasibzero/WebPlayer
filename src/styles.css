@@ -455,6 +455,16 @@ code {
 	display: inline-flex;
 }
 
+.select-wrap.wide {
+	display: flex;
+	width: 100%;
+}
+
+.select-wrap.wide .select {
+	flex: 1 1 auto;
+	width: 100%;
+}
+
 /* ---------- seek bar ---------- */
 
 .seekbar {

@@ -72,6 +72,8 @@ export class PlayerUI {
 	private readonly scanStatus = el<HTMLParagraphElement>('scan-status');
 	private readonly chapterList = el<HTMLDivElement>('chapter-list');
 	private readonly chaptersEmpty = el<HTMLParagraphElement>('chapters-empty');
+	private readonly qualitySelect = el<HTMLSelectElement>('quality-select');
+	private readonly qualityNote = el<HTMLParagraphElement>('quality-note');
 	private readonly mediaInfo = el<HTMLDListElement>('media-info');
 	private readonly rescanActions = el<HTMLDivElement>('rescan-actions');
 	private readonly rescanHint = el<HTMLParagraphElement>('rescan-hint');
@@ -128,6 +130,11 @@ export class PlayerUI {
 
 		this.rateSelect.addEventListener('change', () => {
 			void this.player.setPlaybackRate(Number(this.rateSelect.value));
+		});
+
+		this.qualitySelect.addEventListener('change', () => {
+			const value = this.qualitySelect.value;
+			void this.player.setRenderWidth(value === 'source' ? null : Number(value));
 		});
 
 		this.bindSeekbar();
@@ -209,6 +216,7 @@ export class PlayerUI {
 			this.setDuration(this.player.duration);
 			this.fitCanvas();
 			this.updateRescanOptions();
+			this.renderQualityOptions();
 		});
 		this.player.on('error', (error) => {
 			this.setLoading(false);
@@ -221,6 +229,7 @@ export class PlayerUI {
 			this.renderVideoTracks(this.player.videoTrackInfos, this.player.activeVideoIndexValue);
 			this.fitCanvas();
 			this.updateRescanOptions();
+			this.renderQualityOptions();
 		});
 		this.player.on('volumechange', (value) => {
 			const volume = value as number;
@@ -231,6 +240,10 @@ export class PlayerUI {
 		});
 		this.player.on('ratechange', (rate) => {
 			this.rateSelect.value = String(rate);
+		});
+		this.player.on('qualitychange', () => {
+			this.renderQualityOptions();
+			this.fitCanvas();
 		});
 		this.player.on('ended', () => {
 			this.setStatus('End of media');
@@ -628,6 +641,52 @@ export class PlayerUI {
 		const isRemote = this.player.remoteSource !== null;
 		this.rescanActions.hidden = !isRemote;
 		this.rescanHint.hidden = !(isRemote && this.player.audioChannelStates.length <= 1);
+	}
+
+	/**
+	 * Fills the quality dropdown with the source resolution plus the smaller
+	 * standard resolutions, so the picture can be scaled down on slow machines.
+	 */
+	private renderQualityOptions(): void {
+		const resolution = this.player.effectiveResolution;
+		const current = this.qualitySelect.value;
+
+		this.qualitySelect.replaceChildren();
+
+		if (!resolution.sourceWidth) {
+			this.qualitySelect.disabled = true;
+			this.qualityNote.hidden = true;
+			return;
+		}
+
+		this.qualitySelect.disabled = false;
+
+		const steps = [2160, 1440, 1080, 720, 480, 360, 240];
+		const options: Array<{ value: number | null; label: string }> = [
+			{ value: null, label: `Source — ${resolution.sourceWidth}×${resolution.sourceHeight}` },
+		];
+
+		for (const height of steps) {
+			const width = Math.round((height * resolution.sourceWidth) / resolution.sourceHeight);
+			if (width >= resolution.sourceWidth) continue;
+			options.push({ value: width, label: `${height}p — ${width} wide` });
+		}
+
+		for (const option of options) {
+			const node = document.createElement('option');
+			node.value = option.value === null ? 'source' : String(option.value);
+			node.textContent = option.label;
+			this.qualitySelect.append(node);
+		}
+
+		const desired = resolution.scaled ? String(resolution.width) : 'source';
+		this.qualitySelect.value = options.some((option) => option.value === resolution.width)
+			? desired
+			: current || 'source';
+
+		this.qualityNote.hidden = !resolution.scaled;
+		this.qualityNote.textContent = `Playing at ${resolution.width}×${resolution.height} instead of `
+			+ `${resolution.sourceWidth}×${resolution.sourceHeight}.`;
 	}
 
 	/* ------------------------------------------------------- interactions */

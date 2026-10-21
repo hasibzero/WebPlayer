@@ -43,7 +43,8 @@ export type PlayerEventName =
 	| 'ended'
 	| 'ratechange'
 	| 'volumechange'
-	| 'seeked';
+	| 'seeked'
+	| 'qualitychange';
 
 export interface VideoTrackInfo {
 	index: number;
@@ -422,6 +423,11 @@ async function downloadToBlob(
 	return blob;
 }
 
+/** Returns the height/width ratio of the source video. */
+function targetHeightRatio(width: number, height: number): number {
+	return width > 0 ? height / width : 0.5625;
+}
+
 export class MediaPlayer {
 	private readonly canvas: HTMLCanvasElement;
 	private readonly context: CanvasRenderingContext2D;
@@ -467,6 +473,7 @@ export class MediaPlayer {
 	private scanToken = 0;
 	private subtitleScanner: SubtitleScanner | null = null;
 	private lastScanRequest = -1;
+	private renderWidth: number | null = null;
 	private retriedWithDownload = false;
 	private enabledDisabledTracks = 0;
 	private enabledDisabledTrackNumbers: number[] = [];
@@ -1202,17 +1209,72 @@ export class MediaPlayer {
 			return;
 		}
 
+		await this.createVideoSink();
+		await this.startVideoIterator(token);
+	}
+
+	/** Creates the video sink for the active track at the selected quality. */
+	private async createVideoSink(): Promise<void> {
+		const info = this.videoTracks[this.activeVideoIndex];
+		if (!info) return;
+
 		const canBeTransparent = await info.track.canBeTransparent().catch(() => false);
+		const sourceWidth = info.displayWidth || info.width || 1280;
+		const sourceHeight = info.displayHeight || info.height || 720;
+
+		// The quality setting only changes how large the frames are drawn; the
+		// stream is still decoded at its original resolution.
+		const targetWidth = this.renderWidth ? Math.min(this.renderWidth, sourceWidth) : sourceWidth;
+		const targetHeight = Math.max(1, Math.round((targetHeightRatio(sourceWidth, sourceHeight) * targetWidth)));
+
 		this.videoSink = new CanvasSink(info.track, {
 			poolSize: 2,
 			fit: 'contain',
 			alpha: canBeTransparent,
+			width: targetWidth,
+			height: targetHeight,
 		});
 
-		this.canvas.width = info.displayWidth || info.width || 1280;
-		this.canvas.height = info.displayHeight || info.height || 720;
+		this.canvas.width = targetWidth;
+		this.canvas.height = targetHeight;
+	}
 
+	/**
+	 * Changes the playback resolution. Passing `null` restores the source
+	 * resolution. A lower resolution means less work for the compositor, which
+	 * helps on high resolution files or weak machines.
+	 */
+	async setRenderWidth(width: number | null): Promise<void> {
+		if (this.renderWidth === width) return;
+		this.renderWidth = width && width > 0 ? width : null;
+
+		const info = this.videoTracks[this.activeVideoIndex];
+		if (!info || !info.decodable) return;
+
+		this.videoToken++;
+		const token = this.videoToken;
+
+		await this.videoIterator?.return(undefined).catch(() => {});
+		this.videoIterator = null;
+		this.nextFrame = null;
+
+		await this.createVideoSink();
 		await this.startVideoIterator(token);
+		this.emit('qualitychange');
+	}
+
+	/** The resolution the video is currently drawn at. */
+	get effectiveResolution(): { width: number; height: number; sourceWidth: number; sourceHeight: number; scaled: boolean } {
+		const info = this.videoTracks[this.activeVideoIndex];
+		const sourceWidth = info?.displayWidth || info?.width || 0;
+		const sourceHeight = info?.displayHeight || info?.height || 0;
+		return {
+			width: this.canvas.width,
+			height: this.canvas.height,
+			sourceWidth,
+			sourceHeight,
+			scaled: Boolean(sourceWidth) && this.canvas.width < sourceWidth,
+		};
 	}
 
 	private async startVideoIterator(token = this.videoToken): Promise<void> {
