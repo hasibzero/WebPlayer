@@ -1,0 +1,31 @@
+{
+  "name": "multiaudio-video-player",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Web-based video player with multi-audio track support for local files (MKV, MP4, AVI, TS, ...)",
+  "scripts": {
+    "dev": "node node_modules/vite/bin/vite.js",
+    "build": "node node_modules/typescript/bin/tsc --noEmit && node node_modules/vite/bin/vite.js build",
+    "build:extension": "node node_modules/vite/bin/vite.js build --config vite.extension.config.ts",
+    "build:all": "npm run build && npm run build:extension",
+    "preview": "node node_modules/vite/bin/vite.js preview",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "icons": "node scripts/make-icons.mjs",
+    "pack:extension": "node scripts/pack-extension.mjs",
+    "test": "node --experimental-strip-types test/verify.ts",
+    "test:browser": "node --experimental-strip-types test/browser-check.ts",
+    "test:extension": "node --experimental-strip-types test/extension-check.ts"
+  },
+  "dependencies": {
+    "@mediabunny/ac3": "^1.62.0",
+    "@mediabunny/dts": "^1.62.0",
+    "@mediabunny/prores": "^1.62.0",
+    "mediabunny": "^1.62.0"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^25.15.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

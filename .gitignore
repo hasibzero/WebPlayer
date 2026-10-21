@@ -1,0 +1,9 @@
+node_modules/
+dist/
+extension/dist/
+test/fixtures/
+test/screenshots/
+*.log
+.DS_Store
+.vite/
+multiaudio-player-extension.zip
