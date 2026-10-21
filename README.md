@@ -16,7 +16,8 @@ Everything runs in the browser: files are read straight from disk and **never up
   inside MKV) work just fine.
 - **Multi-audio** — every audio track is listed with its language, codec, channel layout and
   sample rate. Enable several at once to **mix** them (original + commentary, stereo + 5.1, …),
-  each with its own volume fader.
+  each with its own volume fader. Tracks that the file marks as disabled (`FlagEnabled = 0`, which
+  many dual-audio releases do) are enabled automatically so they show up as well.
 - **Multiple video tracks** — pick between alternate angles/encodings of the same file.
 - **Embedded subtitles** — Matroska subtitle tracks (`S_TEXT/UTF8`, `S_TEXT/ASS`, `S_TEXT/WEBVTT`)
   are read directly from the container, because the demuxer does not expose them. They show up in
@@ -116,8 +117,15 @@ container itself declares (*In container*) next to what the player could read, a
 lists more audio tracks than were detected, the player downloads the file a second time on its own
 and re-parses it, because that almost always means the server delivered the file incompletely.
 
-## Keyboard shortcuts
+### Tracks that the file disables
 
+Some releases — dual-audio ones in particular — mark their alternate audio and subtitle tracks
+with `FlagEnabled = 0`. Strict demuxers skip such tracks, so half of the file's tracks would be
+invisible. The player reads the container header itself, rewrites those flags in place (the file
+keeps its exact length, so no offset shifts) and feeds the corrected header to the demuxer. The
+tracks then show up like any others, and the player logs how many it had to enable.
+
+## Keyboard shortcuts
 | Key | Action | Key | Action |
 | --- | --- | --- | --- |
 | `Space` / `K` | Play / pause | `M` | Mute |
