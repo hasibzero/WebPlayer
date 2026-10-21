@@ -334,9 +334,27 @@ async function openUrl(url: string, name?: string): Promise<void> {
 	ui.setLoading(true, 'Opening URL…');
 	ui.setStatus(`Opening ${url}…`);
 
-	const loaded = await player.load(url, name ?? fileNameFromUrl(url), {
-		requestInit: requestInitForUrl(),
-	});
+	// On an HTTPS page the browser refuses plain HTTP subresources. If the very
+	// same address is available over HTTPS, use that instead.
+	const candidates: string[] = [];
+	if (location.protocol === 'https:' && /^http:\/\//i.test(url)) {
+		candidates.push(url.replace(/^http:\/\//i, 'https://'));
+	}
+	candidates.push(url);
+
+	let loaded = false;
+	let usedUrl = url;
+
+	for (const candidate of candidates) {
+		loaded = await player.load(candidate, name ?? fileNameFromUrl(candidate), {
+			requestInit: requestInitForUrl(),
+		});
+		if (loaded) {
+			usedUrl = candidate;
+			break;
+		}
+		lastErrorMessage = '';
+	}
 
 	if (!loaded) {
 		ui.setLoading(false);
@@ -356,10 +374,11 @@ async function openUrl(url: string, name?: string): Promise<void> {
 		return;
 	}
 
+	currentMediaUrl = usedUrl;
 	ui.setEmptyState(false);
-	currentMediaName = name ?? fileNameFromUrl(url);
+	currentMediaName = name ?? fileNameFromUrl(usedUrl);
 	ui.setMediaTitle(currentMediaName, 'Remote source');
-	ui.setStatus(`Streaming ${url}`);
+	ui.setStatus(`Streaming ${usedUrl}`);
 
 	if (player.mode === 'downloaded') {
 		ui.toast('This server does not support range requests — the file was downloaded first so that seeking works.');

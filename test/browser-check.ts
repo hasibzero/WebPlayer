@@ -7,6 +7,7 @@
  */
 import puppeteer from 'puppeteer-core';
 import { resolve } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:5173/';
@@ -352,6 +353,54 @@ try {
 	check('the canvas follows the quality', qualityState.canvasWidth === qualityState.after.width, `${qualityState.canvasWidth} vs ${qualityState.after.width}`);
 	check('the scaling is explained', qualityState.noteVisible === true, qualityState.note);
 	check('playback continues after the change', qualityState.stillPlaying === true);
+
+	console.log('\n== direct remote file (host allows CORS) ==');
+	{
+		const { createServer } = await import('node:http');
+		const fixture = await readFile(resolve('test/fixtures/multi-audio.mkv'));
+		const server = createServer((request, response) => {
+			response.writeHead(200, {
+				'Content-Type': 'video/x-matroska',
+				'Content-Length': String(fixture.length),
+				'Access-Control-Allow-Origin': '*',
+				'Accept-Ranges': 'bytes',
+			});
+			response.end(fixture);
+		});
+		await new Promise<void>((done) => server.listen(0, '127.0.0.1', () => done()));
+		const port = (server.address() as { port: number }).port;
+
+		const remotePage = await browser.newPage();
+		const mediaRequests: string[] = [];
+		remotePage.on('request', (request) => mediaRequests.push(request.url()));
+		await remotePage.goto(
+			`${BASE_URL}?url=${encodeURIComponent(`http://127.0.0.1:${port}/movie.mkv`)}`,
+			{ waitUntil: 'networkidle2' },
+		);
+		await remotePage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+		await new Promise((r) => setTimeout(r, 1500));
+
+		const remoteState = await remotePage.evaluate(() => {
+			const player = (window as any).__player;
+			return {
+				audioTracks: player.audioChannelStates.length,
+				playing: player.isPlaying,
+				domCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			};
+		});
+		console.log('  direct remote:', JSON.stringify(remoteState));
+		check('the web version plays a CORS-enabled host directly', remoteState.audioTracks === 3, String(remoteState.audioTracks));
+		check('the remote file is playing', remoteState.playing === true);
+		check('the panel lists the remote tracks', remoteState.domCards === 3, String(remoteState.domCards));
+		check(
+			'the media is fetched straight from the host',
+			mediaRequests.some((url) => url.includes(`127.0.0.1:${port}`)),
+			mediaRequests.slice(0, 3).join(' | '),
+		);
+
+		await remotePage.close();
+		server.close();
+	}
 
 	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
 	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
