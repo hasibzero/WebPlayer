@@ -1,0 +1,185 @@
+/**
+ * End-to-end browser check: loads a real MKV with several audio tracks in
+ * headless Chrome and verifies that video renders, audio decodes and the
+ * playhead advances.
+ *
+ * Run with: node --experimental-strip-types test/browser-check.ts
+ */
+import puppeteer from 'puppeteer-core';
+import { resolve } from 'node:path';
+
+const CHROME = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+const BASE_URL = process.env.BASE_URL ?? 'http://localhost:5173/';
+const FIXTURE = resolve('test/fixtures/multi-audio.mkv');
+
+let failures = 0;
+function check(label: string, condition: boolean, detail = ''): void {
+	if (condition) console.log(`  ok   ${label}`);
+	else {
+		failures++;
+		console.log(`  FAIL ${label}${detail ? ` -> ${detail}` : ''}`);
+	}
+}
+
+const browser = await puppeteer.launch({
+	executablePath: CHROME,
+	headless: true,
+	args: [
+		'--autoplay-policy=no-user-gesture-required',
+		'--no-sandbox',
+		'--disable-gpu',
+		'--use-gl=swiftshader',
+		'--window-size=1400,900',
+	],
+});
+
+try {
+	const page = await browser.newPage();
+	await page.setViewport({ width: 1400, height: 900 });
+
+	const consoleErrors: string[] = [];
+	page.on('console', (message) => {
+		if (message.type() === 'error') consoleErrors.push(message.text());
+	});
+	page.on('pageerror', (error) => consoleErrors.push(`pageerror: ${error.message}`));
+
+	await page.goto(BASE_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+
+	console.log('\n== loading MKV ==');
+	const input = await page.$('#file-input');
+	if (!input) throw new Error('file input not found');
+	await input.uploadFile(FIXTURE);
+
+	// Wait until the player reports that it is loaded.
+	await page.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+	await new Promise((resolve) => setTimeout(resolve, 1500));
+
+	const state = await page.evaluate(async () => {
+		const player = (window as any).__player;
+		const audioStates = player.audioChannelStates;
+		const videoTracks = player.videoTrackInfos;
+		return {
+			duration: player.duration,
+			audioCount: audioStates.length,
+			audioLangs: audioStates.map((state: any) => state.info.language),
+			audioChannels: audioStates.map((state: any) => state.info.channels),
+			enabled: audioStates.map((state: any) => state.enabled),
+			videoCount: videoTracks.length,
+			videoCodec: videoTracks[0]?.codec ?? null,
+			videoDecodable: videoTracks[0]?.decodable ?? false,
+			audioDecodable: audioStates.map((state: any) => state.info.decodable),
+			playing: player.isPlaying,
+			time: player.getMediaTime(),
+			uiAudioCards: document.querySelectorAll('#audio-track-list .track-card').length,
+			uiVideoCards: document.querySelectorAll('#video-track-list .track-card').length,
+		};
+	});
+
+	console.log('  state:', JSON.stringify(state));
+	check('duration detected', Math.abs(state.duration - 8) < 1, String(state.duration));
+	check('three audio tracks', state.audioCount === 3, String(state.audioCount));
+	check('languages eng/jpn/spa', state.audioLangs.join(',') === 'eng,jpn,spa', state.audioLangs.join(','));
+	check('channel layouts 2/2/6', state.audioChannels.join(',') === '2,2,6', state.audioChannels.join(','));
+	check('all audio tracks decodable', state.audioDecodable.every(Boolean), JSON.stringify(state.audioDecodable));
+	check('one video track', state.videoCount === 1, String(state.videoCount));
+	check('video codec h264/avc', state.videoCodec === 'avc', String(state.videoCodec));
+	check('video decodable', state.videoDecodable === true);
+	check('audio panel shows 3 cards', state.uiAudioCards === 3, String(state.uiAudioCards));
+	check('video panel shows 1 card', state.uiVideoCards === 1, String(state.uiVideoCards));
+
+	console.log('\n== playback ==');
+	await page.waitForFunction(() => (window as any).__player?.getMediaTime() > 1, { timeout: 30000 });
+	const afterPlay = await page.evaluate(() => {
+		const player = (window as any).__player;
+		const canvas = document.getElementById('video-canvas') as HTMLCanvasElement;
+		const context = canvas.getContext('2d')!;
+		const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+		let nonBlack = 0;
+		for (let i = 0; i < data.length; i += 4) {
+			if (data[i] > 12 || data[i + 1] > 12 || data[i + 2] > 12) nonBlack++;
+		}
+		return {
+			time: player.getMediaTime(),
+			playing: player.isPlaying,
+			canvasWidth: canvas.width,
+			canvasHeight: canvas.height,
+			nonBlackPixels: nonBlack,
+		};
+	});
+	console.log('  playback:', JSON.stringify(afterPlay));
+	check('playhead advanced', afterPlay.time > 1, String(afterPlay.time));
+	check('playing', afterPlay.playing === true);
+	check('canvas sized 320x240', afterPlay.canvasWidth === 320 && afterPlay.canvasHeight === 240, `${afterPlay.canvasWidth}x${afterPlay.canvasHeight}`);
+	check('video frame rendered', afterPlay.nonBlackPixels > 500, String(afterPlay.nonBlackPixels));
+
+	console.log('\n== multi-audio mixing ==');
+	const mixResult = await page.evaluate(async () => {
+		const player = (window as any).__player;
+		await player.setAudioTrackEnabled(1, true);
+		await player.setAudioTrackEnabled(2, true);
+		await new Promise((resolve) => setTimeout(resolve, 1200));
+		const states = player.audioChannelStates;
+		return {
+			enabled: states.map((state: any) => state.enabled),
+			time: player.getMediaTime(),
+			decoded: player.audioDecodeCounts,
+		};
+	});
+	console.log('  mix:', JSON.stringify(mixResult));
+	check('three tracks enabled', mixResult.enabled.every(Boolean), JSON.stringify(mixResult.enabled));
+	check('still playing after mixing', mixResult.time > 2, String(mixResult.time));
+	check('every track decoded audio', mixResult.decoded.every((count: number) => count > 0), JSON.stringify(mixResult.decoded));
+
+	console.log('\n== seeking ==');
+	const seekResult = await page.evaluate(async () => {
+		const player = (window as any).__player;
+		await player.seek(5);
+		await new Promise((resolve) => setTimeout(resolve, 900));
+		return { time: player.getMediaTime() };
+	});
+	check('seek to 5s', Math.abs(seekResult.time - 5) < 1.2, String(seekResult.time));
+
+	console.log('\n== pause / resume ==');
+	const pauseResult = await page.evaluate(async () => {
+		const player = (window as any).__player;
+		player.pause();
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		const pausedTime = player.getMediaTime();
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		const stillPaused = player.getMediaTime();
+		return { pausedTime, stillPaused, playing: player.isPlaying };
+	});
+	check('time frozen while paused', Math.abs(pauseResult.pausedTime - pauseResult.stillPaused) < 0.05, `${pauseResult.pausedTime} -> ${pauseResult.stillPaused}`);
+	check('playing flag cleared', pauseResult.playing === false);
+
+	console.log('\n== chapters ==');
+	await page.evaluate(() => (window as any).__player.pause());
+	const chapterPage = await browser.newPage();
+	await chapterPage.setViewport({ width: 1400, height: 900 });
+	await chapterPage.goto(BASE_URL, { waitUntil: 'networkidle2' });
+	const chapterInput = await chapterPage.$('#file-input');
+	await chapterInput!.uploadFile(resolve('test/fixtures/chapters.mkv'));
+	await chapterPage.waitForFunction(() => (window as any).__player?.isLoaded === true, { timeout: 60000 });
+	await chapterPage.waitForFunction(
+		() => document.querySelectorAll('#chapter-list .chapter-item').length > 0,
+		{ timeout: 20000 },
+	);
+	const chapterInfo = await chapterPage.evaluate(() =>
+		Array.from(document.querySelectorAll('#chapter-list .chapter-item')).map((item) => ({
+			time: item.querySelector('.ch-time')?.textContent,
+			title: item.querySelector('.ch-title')?.textContent,
+		})),
+	);
+	console.log('  chapters:', JSON.stringify(chapterInfo));
+	check('two chapters in the UI', chapterInfo.length === 2, String(chapterInfo.length));
+	check('chapter titles', chapterInfo[0]?.title === 'Opening' && chapterInfo[1]?.title === 'Main story', JSON.stringify(chapterInfo));
+	check('chapter timestamps', chapterInfo[1]?.time === '0:03', String(chapterInfo[1]?.time));
+
+	const nonFatal = consoleErrors.filter((text) => !/favicon|Autoplay|net::ERR_FILE/i.test(text));
+	check('no console errors', nonFatal.length === 0, nonFatal.slice(0, 3).join(' | '));
+} finally {
+	await browser.close();
+}
+
+console.log(failures === 0 ? '\nAll browser checks passed.\n' : `\n${failures} browser check(s) failed.\n`);
+process.exit(failures === 0 ? 0 : 1);
