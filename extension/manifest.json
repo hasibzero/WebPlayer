@@ -5,6 +5,9 @@
 	"description": "Adds an \"Open in MultiAudio Player\" option for direct video links (MKV, MP4, WebM, AVI, TS …). The player supports files with several audio tracks and can mix them.",
 	"permissions": ["contextMenus", "tabs"],
 	"host_permissions": ["<all_urls>"],
+	"content_security_policy": {
+		"extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+	},
 	"background": {
 		"service_worker": "background.js",
 		"type": "module"
@@ -26,10 +29,11 @@
 	},
 	"content_scripts": [
 		{
-			"matches": ["http://*/*", "https://*/*", "file:///*"],
+			"matches": ["<all_urls>"],
 			"js": ["content.js"],
 			"run_at": "document_idle",
-			"all_frames": false
+			"all_frames": true,
+			"match_about_blank": true
 		}
 	]
 }
